@@ -5,6 +5,57 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
+description = "The shared native host of the Boulangerie libraries: GPUI on Tauri, driven over a C ABI"
 
 [features]
-playwright = []
+default = ["components-gpui-kit"]
+# Native component sets (`components.rs`), one feature each.
+components-gpui-kit = []
+# Serves the app's windows to Playwright clients (gpui-playwright) when
+# GPUI_PLAYWRIGHT is set. Test builds only: release builds leave it out.
+playwright = ["dep:gpui-playwright", "gpui-kit/test-support", "gpui-playwright/painted-text"]
+
+[dependencies]
+async-channel = "2"
+# Text inputs and checkboxes, and the Root that observes them for Playwright.
+gpui-kit = { version = "=0.7.3", default-features = false, features = ["component", "assets"] }
+gpui-playwright = { git = "https://github.com/Ziinc/gpui-playwright", rev = "14ec1fe92f2c9ca58607808abdc824d20fa1ca4d", optional = true }
+# gpui-kit's icon catalog. `debug-embed` embeds it in debug builds too:
+# without it they read the icons from the build machine's disk, which a
+# phone (whose APKs are debug builds unless signed) does not have.
+rust-embed = { version = "8", features = ["debug-embed"] }
+levain-abi = { path = "../levain-abi" }
+serde = { version = "1", features = ["derive"] }
+# Native open and save dialogs for phx-pick-file / phx-pick-save.
+tauri-plugin-dialog = "2"
+# open_url: tauri-gpui's platform leaves URLs to it.
+tauri-plugin-opener = "2"
+serde_json = "1"
+# Tauri's defaults without `dbus`, as tauri-plugin-gpui has them: TAO's portal
+# colour-scheme lookup blocks the main thread 5 s per call when the portal
+# never answers. `portal.rs` reads it off the main thread instead.
+tauri = { version = "2.12", default-features = false, features = ["unstable", "wry", "compression", "common-controls-v6", "dynamic-acl", "x11"] }
+# tauri-gpui's main is on gpui-pre =0.3.9, the snapshot gpui-kit 0.7.3 uses.
+# Switch to a release once one is published.
+tauri-plugin-gpui = { git = "https://github.com/ziinc/tauri-gpui", features = ["mobile"] }
+
+# The portal's colour scheme, read off the main thread (`portal.rs`). Both
+# are already in the tree, through rfd and async-io.
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.13", default-features = false, features = ["async-io", "settings"] }
+futures-lite = "2"
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.15"
+libc = "0.2"
+log = "0.4"
+
+# The app ships inside the host library on phones (`mobile.rs`).
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+flate2 = "1"
+tar = "0.4"
+
+[dev-dependencies]
+flate2 = "1"
+tar = "0.4"
+tempfile = "3"
