@@ -1,0 +1,179 @@
+name: Release
+
+# Pushing a `vX.Y.Z` tag publishes levain-abi and levain-pack to crates.io,
+# builds levain-pack for every desktop target, and creates a GitHub release
+# for the tag with those binaries, their SHA-256s and generated notes. The
+# tag must match the workspace version and point at a commit on main.
+# Re-running is safe: versions already on crates.io are skipped, and an
+# existing release keeps its notes and gets its assets replaced.
+#
+# levain itself is not published: crates.io rejects its git dependencies
+# (tauri-plugin-gpui, gpui-playwright, the gpui-kit fork). Language hosts pin
+# it by git revision, such as this tag.
+#
+# crates.io auth: the CARGO_REGISTRY_TOKEN secret when it is set (needed for a
+# crate's first publish), otherwise trusted publishing, whose publisher must
+# name this repository, `release.yml` and the `release` environment.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check the tag
+        id: version
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "levain-abi") | .version')
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match the workspace version $version"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tag $GITHUB_REF_NAME is not on main"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  # levain-pack for each target language packages bundle, named as
+  # `levain-pack target` names the machine it runs on.
+  pack:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-linux
+            os: ubuntu-24.04
+          - target: aarch64-linux
+            os: ubuntu-24.04-arm
+          - target: aarch64-macos
+            os: macos-15
+          - target: x86_64-macos
+            os: macos-15-intel
+          - target: x86_64-windows
+            os: windows-2025
+          - target: aarch64-windows
+            os: windows-11-arm
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: pack-${{ matrix.target }}
+      - name: Build
+        run: cargo build --profile dist -p levain-pack --locked
+      - name: Check the target name
+        run: |
+          built=$(target/dist/levain-pack target)
+          if [ "$built" != "${{ matrix.target }}" ]; then
+            echo "::error::built on $built, expected ${{ matrix.target }}"
+            exit 1
+          fi
+      - name: Package
+        run: |
+          mkdir -p out
+          tar -czf "out/levain-pack-v${{ needs.check.outputs.version }}-${{ matrix.target }}.tar.gz" \
+            -C target/dist levain-pack${{ runner.os == 'Windows' && '.exe' || '' }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pack-${{ matrix.target }}
+          path: out/*.tar.gz
+
+  release:
+    needs: [check, pack]
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find unpublished crates
+        id: plan
+        run: |
+          pending=""
+          for crate in levain-abi levain-pack; do
+            version=$(cargo metadata --no-deps --format-version 1 \
+              | jq -r --arg crate "$crate" '.packages[] | select(.name == $crate) | .version')
+            if curl -sf -o /dev/null -A "levain-release (https://github.com/${GITHUB_REPOSITORY})" \
+              "https://crates.io/api/v1/crates/$crate/$version"; then
+              echo "$crate $version is already on crates.io; skipping"
+            else
+              pending="$pending $crate"
+            fi
+          done
+          echo "pending=${pending# }" >> "$GITHUB_OUTPUT"
+
+      # Neither crate links GPUI or Tauri, so no system libraries are needed.
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.plan.outputs.pending != ''
+      - uses: Swatinem/rust-cache@v2
+        if: steps.plan.outputs.pending != ''
+
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+        if: steps.plan.outputs.pending != '' && env.CARGO_REGISTRY_TOKEN == ''
+      - name: Publish to crates.io
+        if: steps.plan.outputs.pending != ''
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ env.CARGO_REGISTRY_TOKEN || steps.auth.outputs.token }}
+          PENDING: ${{ steps.plan.outputs.pending }}
+        run: |
+          for crate in $PENDING; do
+            cargo publish -p "$crate" --locked
+          done
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pack-*
+          merge-multiple: true
+          path: out
+      - name: Checksums
+        run: |
+          (cd out && sha256sum *.tar.gz > SHA256SUMS)
+          {
+            echo '```'
+            cat out/SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            args=(--verify-tag --generate-notes --title "$GITHUB_REF_NAME")
+            # Notes cover the changes since the previous version tag.
+            if previous=$(git describe --tags --abbrev=0 --match 'v*.*.*' "$GITHUB_REF_NAME^" 2>/dev/null); then
+              args+=(--notes-start-tag "$previous")
+            fi
+            gh release create "$GITHUB_REF_NAME" "${args[@]}"
+          fi
+          gh release upload "$GITHUB_REF_NAME" out/*.tar.gz out/SHA256SUMS --clobber

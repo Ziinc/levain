@@ -7,6 +7,7 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/Ziinc/levain"
+homepage = "https://boulangerie.tznc.dev"
 
 # wgpu turns on shader debug info in debug builds, and the Android emulator's
 # SwiftShader Vulkan rejects the SPIR-V that produces.
