@@ -9,3 +9,13 @@ publish = false
 [[bin]]
 name = "levain-pack"
 path = "src/main.rs"
+
+[dependencies]
+flate2 = "1"
+serde_json = "1"
+sha2 = "0.10"
+tar = "0.4"
+ureq = { version = "2", default-features = false, features = ["tls", "native-certs", "proxy-from-env"] }
+
+[dev-dependencies]
+tempfile = "3"
