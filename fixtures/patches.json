@@ -1,0 +1,526 @@
+[
+  {
+    "name": "nothing changed",
+    "old": {
+      "t": "div",
+      "a": {
+        "class": "p-2"
+      },
+      "c": [
+        "hi"
+      ]
+    },
+    "new": {
+      "t": "div",
+      "a": {
+        "class": "p-2"
+      },
+      "c": [
+        "hi"
+      ]
+    },
+    "patch": []
+  },
+  {
+    "name": "text in a child",
+    "old": {
+      "t": "div",
+      "a": {},
+      "c": [
+        {
+          "t": "text",
+          "a": {},
+          "c": [
+            "Count: 1"
+          ]
+        }
+      ]
+    },
+    "new": {
+      "t": "div",
+      "a": {},
+      "c": [
+        {
+          "t": "text",
+          "a": {},
+          "c": [
+            "Count: 2"
+          ]
+        }
+      ]
+    },
+    "patch": [
+      {
+        "op": "replace",
+        "at": [
+          0,
+          0
+        ],
+        "node": "Count: 2"
+      }
+    ]
+  },
+  {
+    "name": "attributes",
+    "old": {
+      "t": "div",
+      "a": {
+        "class": "a"
+      },
+      "c": [
+        "x"
+      ]
+    },
+    "new": {
+      "t": "div",
+      "a": {
+        "class": "b",
+        "title": "n"
+      },
+      "c": [
+        "x"
+      ]
+    },
+    "patch": [
+      {
+        "op": "attrs",
+        "at": [],
+        "a": {
+          "class": "b",
+          "title": "n"
+        }
+      }
+    ]
+  },
+  {
+    "name": "a child appended",
+    "old": {
+      "t": "ul",
+      "a": {},
+      "c": [
+        {
+          "t": "li",
+          "a": {},
+          "c": [
+            "a"
+          ]
+        },
+        {
+          "t": "li",
+          "a": {},
+          "c": [
+            "b"
+          ]
+        }
+      ]
+    },
+    "new": {
+      "t": "ul",
+      "a": {},
+      "c": [
+        {
+          "t": "li",
+          "a": {},
+          "c": [
+            "a"
+          ]
+        },
+        {
+          "t": "li",
+          "a": {},
+          "c": [
+            "b"
+          ]
+        },
+        {
+          "t": "li",
+          "a": {},
+          "c": [
+            "c"
+          ]
+        }
+      ]
+    },
+    "patch": [
+      {
+        "op": "splice",
+        "at": [],
+        "start": 2,
+        "delete": 0,
+        "c": [
+          {
+            "t": "li",
+            "a": {},
+            "c": [
+              "c"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "a child prepended",
+    "old": {
+      "t": "ul",
+      "a": {},
+      "c": [
+        {
+          "t": "li",
+          "a": {},
+          "c": [
+            "b"
+          ]
+        }
+      ]
+    },
+    "new": {
+      "t": "ul",
+      "a": {},
+      "c": [
+        {
+          "t": "li",
+          "a": {},
+          "c": [
+            "a"
+          ]
+        },
+        {
+          "t": "li",
+          "a": {},
+          "c": [
+            "b"
+          ]
+        }
+      ]
+    },
+    "patch": [
+      {
+        "op": "splice",
+        "at": [],
+        "start": 0,
+        "delete": 0,
+        "c": [
+          {
+            "t": "li",
+            "a": {},
+            "c": [
+              "a"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "a middle child removed",
+    "old": {
+      "t": "ul",
+      "a": {},
+      "c": [
+        {
+          "t": "li",
+          "a": {},
+          "c": [
+            "a"
+          ]
+        },
+        {
+          "t": "li",
+          "a": {},
+          "c": [
+            "b"
+          ]
+        },
+        {
+          "t": "li",
+          "a": {},
+          "c": [
+            "c"
+          ]
+        }
+      ]
+    },
+    "new": {
+      "t": "ul",
+      "a": {},
+      "c": [
+        {
+          "t": "li",
+          "a": {},
+          "c": [
+            "a"
+          ]
+        },
+        {
+          "t": "li",
+          "a": {},
+          "c": [
+            "c"
+          ]
+        }
+      ]
+    },
+    "patch": [
+      {
+        "op": "splice",
+        "at": [],
+        "start": 1,
+        "delete": 1,
+        "c": []
+      }
+    ]
+  },
+  {
+    "name": "a child changed and one added",
+    "old": {
+      "t": "div",
+      "a": {},
+      "c": [
+        {
+          "t": "text",
+          "a": {},
+          "c": [
+            "1"
+          ]
+        },
+        {
+          "t": "hr",
+          "a": {},
+          "c": []
+        }
+      ]
+    },
+    "new": {
+      "t": "div",
+      "a": {},
+      "c": [
+        {
+          "t": "text",
+          "a": {},
+          "c": [
+            "2"
+          ]
+        },
+        {
+          "t": "p",
+          "a": {},
+          "c": [
+            "new"
+          ]
+        },
+        {
+          "t": "hr",
+          "a": {},
+          "c": []
+        }
+      ]
+    },
+    "patch": [
+      {
+        "op": "replace",
+        "at": [
+          0,
+          0
+        ],
+        "node": "2"
+      },
+      {
+        "op": "splice",
+        "at": [],
+        "start": 1,
+        "delete": 0,
+        "c": [
+          {
+            "t": "p",
+            "a": {},
+            "c": [
+              "new"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "another tag",
+    "old": {
+      "t": "div",
+      "a": {},
+      "c": [
+        "x"
+      ]
+    },
+    "new": {
+      "t": "section",
+      "a": {},
+      "c": [
+        "x"
+      ]
+    },
+    "patch": [
+      {
+        "op": "replace",
+        "at": [],
+        "node": {
+          "t": "section",
+          "a": {},
+          "c": [
+            "x"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "name": "another id is another element",
+    "old": {
+      "t": "div",
+      "a": {},
+      "c": [
+        {
+          "t": "div",
+          "a": {
+            "id": "a"
+          },
+          "c": [
+            "1"
+          ]
+        }
+      ]
+    },
+    "new": {
+      "t": "div",
+      "a": {},
+      "c": [
+        {
+          "t": "div",
+          "a": {
+            "id": "b"
+          },
+          "c": [
+            "1"
+          ]
+        }
+      ]
+    },
+    "patch": [
+      {
+        "op": "replace",
+        "at": [
+          0
+        ],
+        "node": {
+          "t": "div",
+          "a": {
+            "id": "b"
+          },
+          "c": [
+            "1"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "name": "deep change",
+    "old": {
+      "t": "div",
+      "a": {},
+      "c": [
+        {
+          "t": "div",
+          "a": {},
+          "c": [
+            {
+              "t": "text",
+              "a": {
+                "class": "a"
+              },
+              "c": [
+                "x"
+              ]
+            }
+          ]
+        },
+        "y"
+      ]
+    },
+    "new": {
+      "t": "div",
+      "a": {},
+      "c": [
+        {
+          "t": "div",
+          "a": {},
+          "c": [
+            {
+              "t": "text",
+              "a": {
+                "class": "b"
+              },
+              "c": [
+                "x"
+              ]
+            }
+          ]
+        },
+        "y"
+      ]
+    },
+    "patch": [
+      {
+        "op": "attrs",
+        "at": [
+          0,
+          0
+        ],
+        "a": {
+          "class": "b"
+        }
+      }
+    ]
+  },
+  {
+    "name": "from nothing",
+    "old": null,
+    "new": {
+      "t": "div",
+      "a": {},
+      "c": [
+        "x"
+      ]
+    },
+    "patch": [
+      {
+        "op": "replace",
+        "at": [],
+        "node": {
+          "t": "div",
+          "a": {},
+          "c": [
+            "x"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "name": "to nothing",
+    "old": {
+      "t": "div",
+      "a": {},
+      "c": [
+        "x"
+      ]
+    },
+    "new": null,
+    "patch": [
+      {
+        "op": "replace",
+        "at": [],
+        "node": null
+      }
+    ]
+  }
+]

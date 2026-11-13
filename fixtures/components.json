@@ -1,0 +1,55 @@
+{
+  "version": 2,
+  "set": "kit",
+  "gpui": "0.0.1",
+  "gpui_kit": "0.0.2",
+  "hash": "ad5978e625448927",
+  "components": [
+    {
+      "tag": "kit-badge",
+      "doc": "A short status label.",
+      "children": true,
+      "attrs": [
+        {
+          "name": "variant",
+          "type": "enum",
+          "values": [
+            "primary",
+            "danger"
+          ],
+          "doc": "Its color.",
+          "required": false
+        },
+        {
+          "name": "pill",
+          "type": "boolean",
+          "doc": "Fully rounded ends.",
+          "required": false
+        }
+      ],
+      "events": []
+    },
+    {
+      "tag": "kit-progress-bar",
+      "doc": "How far along something is.",
+      "children": false,
+      "attrs": [
+        {
+          "name": "value",
+          "type": "number",
+          "required": true,
+          "doc": "0 to 100."
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "doc": "Text on the bar.",
+          "required": false
+        }
+      ],
+      "events": [
+        "click"
+      ]
+    }
+  ]
+}

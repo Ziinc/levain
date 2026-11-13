@@ -1,0 +1,153 @@
+{
+  "version": 2,
+  "set": "gpui-kit",
+  "gpui": "0.3.9",
+  "gpui_kit": "0.7.3",
+  "components": [
+    {
+      "tag": "kit-tag",
+      "doc": "A small status label.",
+      "children": true,
+      "attrs": [
+        {
+          "name": "variant",
+          "required": false,
+          "doc": "Its color. Secondary unless set.",
+          "values": [
+            "primary",
+            "secondary",
+            "danger",
+            "success",
+            "warning",
+            "info"
+          ],
+          "type": "enum"
+        },
+        {
+          "name": "outline",
+          "required": false,
+          "doc": "A border without a fill.",
+          "type": "boolean"
+        },
+        {
+          "name": "pill",
+          "required": false,
+          "doc": "Fully rounded ends.",
+          "type": "boolean"
+        },
+        {
+          "name": "small",
+          "required": false,
+          "doc": "The small size.",
+          "type": "boolean"
+        },
+        {
+          "name": "class",
+          "required": false,
+          "doc": "Layout and style classes, as on a `<div>`.",
+          "type": "string"
+        }
+      ],
+      "events": []
+    },
+    {
+      "tag": "kit-progress",
+      "doc": "A horizontal progress bar, named by its `aria-label`.",
+      "children": false,
+      "attrs": [
+        {
+          "name": "value",
+          "required": false,
+          "doc": "How far along, 0 to 100.",
+          "type": "number"
+        },
+        {
+          "name": "loading",
+          "required": false,
+          "doc": "An indeterminate animation in place of `value`.",
+          "type": "boolean"
+        },
+        {
+          "name": "class",
+          "required": false,
+          "doc": "Layout and style classes, as on a `<div>`.",
+          "type": "string"
+        }
+      ],
+      "events": []
+    },
+    {
+      "tag": "kit-spinner",
+      "doc": "A spinning loading indicator.",
+      "children": false,
+      "attrs": [
+        {
+          "name": "size",
+          "required": false,
+          "doc": "Medium unless set.",
+          "values": [
+            "xsmall",
+            "small",
+            "medium",
+            "large"
+          ],
+          "type": "enum"
+        },
+        {
+          "name": "class",
+          "required": false,
+          "doc": "Layout and style classes, as on a `<div>`.",
+          "type": "string"
+        }
+      ],
+      "events": []
+    },
+    {
+      "tag": "kit-skeleton",
+      "doc": "A pulsing placeholder for content still loading. Size it with `class`.",
+      "children": false,
+      "attrs": [
+        {
+          "name": "secondary",
+          "required": false,
+          "doc": "The secondary color.",
+          "type": "boolean"
+        },
+        {
+          "name": "class",
+          "required": false,
+          "doc": "Layout and style classes, as on a `<div>`.",
+          "type": "string"
+        }
+      ],
+      "events": []
+    },
+    {
+      "tag": "kit-kbd",
+      "doc": "A keyboard shortcut, drawn as keycaps.",
+      "children": false,
+      "attrs": [
+        {
+          "name": "keys",
+          "required": true,
+          "doc": "The keystroke, as GPUI writes it (`cmd-k`, `ctrl-shift-p`).",
+          "type": "string"
+        },
+        {
+          "name": "outline",
+          "required": false,
+          "doc": "Outlined keycaps.",
+          "type": "boolean"
+        },
+        {
+          "name": "class",
+          "required": false,
+          "doc": "Layout and style classes, as on a `<div>`.",
+          "type": "string"
+        }
+      ],
+      "events": []
+    }
+  ],
+  "hash": "c76030cc63297c74"
+}

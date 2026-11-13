@@ -1,0 +1,38 @@
+[workspace]
+resolver = "3"
+members = ["levain-abi", "levain", "levain-pack"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/Ziinc/levain"
+
+# wgpu turns on shader debug info in debug builds, and the Android emulator's
+# SwiftShader Vulkan rejects the SPIR-V that produces.
+[profile.dev.package.wgpu-types]
+debug-assertions = false
+
+# Release binaries ship to users: no symbols (they made the Android host
+# library hundreds of MB).
+[profile.release]
+strip = true
+
+# The precompiled hosts, built once for every app: whole-program
+# optimisation for size makes a host about a third as big, for a build
+# several times longer.
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+opt-level = "s"
+
+# gpui-kit 0.7.3 plus the painted-text observation gpui-playwright reads
+# (the `playwright` feature). Unused without that feature. Language hosts
+# that depend on levain repeat these patches in their own workspace.
+[patch.crates-io]
+gpui-kit = { git = "https://github.com/Ziinc/gpui-kit", rev = "7ea1125954e6701d849fd448aab08ab2ac63d07f" }
+gpui-base = { git = "https://github.com/Ziinc/gpui-kit", rev = "7ea1125954e6701d849fd448aab08ab2ac63d07f" }
+gpui-component = { git = "https://github.com/Ziinc/gpui-kit", rev = "7ea1125954e6701d849fd448aab08ab2ac63d07f" }
+gpui-component-macros = { git = "https://github.com/Ziinc/gpui-kit", rev = "7ea1125954e6701d849fd448aab08ab2ac63d07f" }
+gpui-kit-assets = { git = "https://github.com/Ziinc/gpui-kit", rev = "7ea1125954e6701d849fd448aab08ab2ac63d07f" }
