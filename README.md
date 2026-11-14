@@ -106,7 +106,8 @@ its UI thread, so do not block in it.
 `api.render(ctx, window, json, len)` replaces what window `window` shows.
 Window 0 is the main window. The JSON is one of three messages.
 
-A frame, the whole view. Only `root` is needed:
+A frame, the whole view. `root` is required (`null` for no view): a message
+without it is not a frame. The other keys are optional:
 
 ```json
 {"root": <node>, "theme": {}, "lists": {"<id>": {"start": 0, "rows": [<node>]}},
