@@ -10,7 +10,7 @@ use std::sync::Mutex;
 
 use tauri_plugin_gpui::gpui::{FontWeight, Hsla, Rgba, Styled, px, relative, rgb};
 
-/// Theme tokens sent by Elixir, by name.
+/// Theme tokens sent by the app, by name.
 pub type Theme = HashMap<String, String>;
 
 /// The state variants a class can be scoped to.
@@ -268,7 +268,7 @@ fn reported(class: &str) -> bool {
 fn unknown<S>(s: S, class: &str) -> S {
     let mut reported = REPORTED.lock().unwrap();
     if reported.get_or_insert_default().insert(class.to_owned()) {
-        eprintln!("baguette: unsupported class `{class}`");
+        crate::log_line(&format!("levain: unsupported class `{class}`"));
     }
     s
 }
@@ -334,7 +334,7 @@ mod tests {
         assert!(reported("overflow-sideways"));
     }
 
-    // `style_gen.rs`, from `mix baguette.styles`.
+    // `style_gen.rs`, regenerated from gpui's rustdoc.
     #[test]
     fn styled_methods_are_classes_too() {
         use crate::style_gen::refinement;
@@ -384,5 +384,127 @@ mod tests {
         assert_eq!(spacing("[13px]"), Some(13.));
         assert_eq!(spacing("px"), Some(1.));
         assert_eq!(spacing("primary"), None);
+    }
+
+    use tauri_plugin_gpui::gpui::{self, AbsoluteLength, DefiniteLength, Length, StyleRefinement};
+
+    fn styled(classes: &str, theme: &Theme) -> StyleRefinement {
+        let mut div = apply(gpui::div(), classes.split_whitespace(), theme);
+        div.style().clone()
+    }
+
+    fn definite(pixels: f32) -> Option<DefiniteLength> {
+        Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(pixels))))
+    }
+
+    #[test]
+    fn spacing_utilities_set_their_sides() {
+        let s = styled("p-4 px-2 mt-1 gap-3", &Theme::new());
+        // `px-2` comes after `p-4`, so it wins on the horizontal sides.
+        assert_eq!(s.padding.top, definite(16.));
+        assert_eq!(s.padding.bottom, definite(16.));
+        assert_eq!(s.padding.left, definite(8.));
+        assert_eq!(s.padding.right, definite(8.));
+        assert_eq!(s.margin.top, Some(gpui::Length::Definite(px(4.).into())));
+        assert_eq!(s.gap.width, definite(12.));
+        assert_eq!(s.gap.height, definite(12.));
+    }
+
+    #[test]
+    fn sizes_take_the_scale_arbitrary_pixels_and_percentages() {
+        let theme = Theme::new();
+        let s = styled("w-8 h-[13px]", &theme);
+        assert_eq!(s.size.width, Some(Length::Definite(px(32.).into())));
+        assert_eq!(s.size.height, Some(Length::Definite(px(13.).into())));
+        let s = styled("w-[40%] h-[75%]", &theme);
+        assert_eq!(s.size.width, Some(Length::Definite(relative(0.4))));
+        assert_eq!(s.size.height, Some(Length::Definite(relative(0.75))));
+        assert_eq!(
+            styled("w-full", &theme).size.width,
+            Some(relative(1.).into())
+        );
+        assert_eq!(
+            styled("size-4", &theme).size.height,
+            Some(Length::Definite(px(16.).into()))
+        );
+    }
+
+    #[test]
+    fn later_utilities_override_earlier_ones() {
+        let s = styled("opacity-50 opacity-25", &Theme::new());
+        assert_eq!(s.opacity, Some(0.25));
+    }
+
+    #[test]
+    fn colours_apply_by_prefix() {
+        let theme = Theme::from([("primary".into(), "#2563eb".into())]);
+        let s = styled("bg-primary text-white border-[#ff0000]", &theme);
+        assert_eq!(s.background, Some(Hsla::from(rgb(0x2563eb)).into()));
+        assert_eq!(s.text.color, Some(Hsla::from(rgb(0xffffff))));
+        assert_eq!(s.border_color, Some(Hsla::from(rgb(0xff0000))));
+    }
+
+    #[test]
+    fn unknown_colours_and_sizes_are_reported_not_applied() {
+        let s = styled("bg-nonexistent-token p-wat", &Theme::new());
+        assert!(s.background.is_none());
+        assert!(s.padding.top.is_none());
+        assert!(reported("bg-nonexistent-token"));
+        assert!(reported("p-wat"));
+    }
+
+    #[test]
+    fn colours_accept_alpha_and_eight_digit_hex() {
+        let theme = Theme::from([("shade".into(), "#00000080".into())]);
+        let shade = color("shade", &theme).unwrap();
+        assert!((shade.a - 128. / 255.).abs() < 1e-6);
+        assert_eq!(color("transparent", &theme).map(|c| c.a), Some(0.));
+        // Alpha multiplies the colour's own.
+        let faded = color("shade/50", &theme).unwrap();
+        assert!((faded.a - 64. / 255.).abs() < 1e-3);
+        assert_eq!(color("black/25", &theme).map(|c| c.a), Some(0.25));
+    }
+
+    #[test]
+    fn malformed_colours_are_none() {
+        let theme = Theme::from([
+            ("short".into(), "#fff".into()),
+            ("nohash".into(), "ffffff".into()),
+            ("nothex".into(), "#gggggg".into()),
+        ]);
+        for value in ["short", "nohash", "nothex", "[red]", "[#12]", "white/x", ""] {
+            assert_eq!(color(value, &theme), None, "{value}");
+        }
+    }
+
+    #[test]
+    fn variant_classes_keep_their_inner_colons() {
+        // Only the first colon splits off the variant; unknown variants and
+        // prefixed classes are no one's base class.
+        assert_eq!(
+            for_variant("hover:bg-[#fff]", Variant::Hover).collect::<Vec<_>>(),
+            ["bg-[#fff]"]
+        );
+        assert_eq!(for_variant("md:p-2", Variant::Base).count(), 0);
+        assert_eq!(for_variant("", Variant::Base).count(), 0);
+        assert_eq!(
+            for_variant("  a   b ", Variant::Base).collect::<Vec<_>>(),
+            ["a", "b"]
+        );
+    }
+
+    #[test]
+    fn plain_utilities_set_the_layout() {
+        let s = styled("flex-col items-center justify-between", &Theme::new());
+        assert_eq!(s.display, Some(gpui::Display::Flex));
+        assert_eq!(s.flex_direction, Some(gpui::FlexDirection::Column));
+        assert_eq!(s.align_items, Some(gpui::AlignItems::Center));
+        assert_eq!(s.justify_content, Some(gpui::JustifyContent::SpaceBetween));
+        let s = styled("rounded-lg font-bold", &Theme::new());
+        assert_eq!(s.text.font_weight, Some(FontWeight::BOLD));
+        assert_eq!(
+            s.corner_radii.top_left,
+            Some(AbsoluteLength::Pixels(px(8.)))
+        );
     }
 }

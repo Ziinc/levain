@@ -1,4 +1,4 @@
-//! Keymaps from Elixir (`keymap` in `Baguette.View`) as GPUI key bindings,
+//! Keymaps from the app (`keymap` in the view) as GPUI key bindings,
 //! and the one action type they all dispatch.
 
 use std::collections::BTreeMap;
@@ -19,14 +19,14 @@ pub struct Binding {
     pub context: Option<String>,
 }
 
-/// An action of the view's, named as Elixir names it. GPUI dispatches it
+/// An action of the view's, named as the app names it. GPUI dispatches it
 /// like any other; the host sends its name back.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
-pub struct ElixirAction {
+pub struct RuntimeAction {
     pub name: SharedString,
 }
 
-impl Action for ElixirAction {
+impl Action for RuntimeAction {
     fn boxed_clone(&self) -> Box<dyn Action> {
         Box::new(self.clone())
     }
@@ -42,7 +42,7 @@ impl Action for ElixirAction {
     }
 
     fn name_for_type() -> &'static str {
-        "baguette::ElixirAction"
+        "levain::RuntimeAction"
     }
 
     fn build(value: serde_json::Value) -> gpui::Result<Box<dyn Action>> {
@@ -53,7 +53,7 @@ impl Action for ElixirAction {
 /// The key context of window `window`'s content, which scopes its view's
 /// bindings to that window.
 pub fn window_context(window: u32) -> String {
-    format!("baguette-window-{window}")
+    format!("levain-window-{window}")
 }
 
 /// Every window's bindings. GPUI's keymap is the app's, so each is scoped
@@ -77,7 +77,7 @@ pub fn set(window: u32, bindings: &[Binding], cx: &mut gpui::App) {
         .flat_map(|(window, bindings)| bindings.iter().map(|b| scoped(*window, b)))
         .filter_map(|binding| {
             key_binding(&binding, mapper.as_ref())
-                .map_err(|error| crate::log_line(&format!("baguette: keymap: {error}")))
+                .map_err(|error| crate::log_line(&format!("levain: keymap: {error}")))
                 .ok()
         })
         .collect();
@@ -85,7 +85,7 @@ pub fn set(window: u32, bindings: &[Binding], cx: &mut gpui::App) {
         .key_bindings()
         .borrow()
         .bindings()
-        .filter(|key| key.action().name() != ElixirAction::name_for_type())
+        .filter(|key| key.action().name() != RuntimeAction::name_for_type())
         .cloned()
         .collect();
     cx.clear_key_bindings();
@@ -118,7 +118,7 @@ pub fn key_binding(
         )),
         None => None,
     };
-    let action = ElixirAction {
+    let action = RuntimeAction {
         name: binding.action.clone().into(),
     };
     KeyBinding::load(
@@ -148,7 +148,7 @@ mod tests {
     #[test]
     fn binds_keys_to_named_actions() {
         let key = key_binding(&binding("secondary-k", Some("Jobs")), &DummyKeyboardMapper).unwrap();
-        let expected = ElixirAction {
+        let expected = RuntimeAction {
             name: "open_palette".into(),
         };
         assert!(key.action().partial_eq(&expected));
@@ -166,22 +166,91 @@ mod tests {
     fn scopes_bindings_to_their_window() {
         assert_eq!(
             scoped(2, &binding("escape", None)).context.as_deref(),
-            Some("baguette-window-2")
+            Some("levain-window-2")
         );
         let jobs = scoped(0, &binding("secondary-k", Some("Jobs && !Editing")));
         assert_eq!(
             jobs.context.as_deref(),
-            Some("baguette-window-0 > (Jobs && !Editing)")
+            Some("levain-window-0 > (Jobs && !Editing)")
         );
         assert!(key_binding(&jobs, &DummyKeyboardMapper).is_ok());
     }
 
     #[test]
     fn actions_compare_by_name() {
-        let a = ElixirAction { name: "a".into() };
-        assert!(a.partial_eq(&ElixirAction { name: "a".into() }));
-        assert!(!a.partial_eq(&ElixirAction { name: "b".into() }));
-        let built = ElixirAction::build(serde_json::json!({"name": "a"})).unwrap();
+        let a = RuntimeAction { name: "a".into() };
+        assert!(a.partial_eq(&RuntimeAction { name: "a".into() }));
+        assert!(!a.partial_eq(&RuntimeAction { name: "b".into() }));
+        let built = RuntimeAction::build(serde_json::json!({"name": "a"})).unwrap();
         assert!(built.partial_eq(&a));
+    }
+
+    #[test]
+    fn bindings_read_with_or_without_a_context() {
+        let bindings: Vec<Binding> = serde_json::from_str(
+            r#"[{"keys": "escape", "action": "close"},
+                {"keys": "ctrl-k", "action": "open", "context": "Jobs"}]"#,
+        )
+        .unwrap();
+        assert_eq!(bindings[0], binding_of("escape", "close", None));
+        assert_eq!(bindings[1].context.as_deref(), Some("Jobs"));
+        assert!(serde_json::from_str::<Binding>(r#"{"keys": "k"}"#).is_err());
+    }
+
+    fn binding_of(keys: &str, action: &str, context: Option<&str>) -> Binding {
+        Binding {
+            keys: keys.into(),
+            action: action.into(),
+            context: context.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn windows_have_their_own_contexts() {
+        assert_eq!(window_context(0), "levain-window-0");
+        assert_ne!(window_context(1), window_context(11));
+    }
+
+    #[test]
+    fn whitespace_only_keys_are_refused_with_the_action_named() {
+        let error = key_binding(&binding_of("  ", "save", None), &DummyKeyboardMapper)
+            .err()
+            .unwrap();
+        assert_eq!(error, "`save` has no keys");
+    }
+
+    #[test]
+    fn chords_of_several_keystrokes_bind() {
+        let key = key_binding(&binding("ctrl-k ctrl-s", None), &DummyKeyboardMapper).unwrap();
+        assert_eq!(key.keystrokes().len(), 2);
+    }
+
+    #[test]
+    fn contexts_with_a_parent_chain_parse() {
+        let nested = binding("k", Some("Workspace > Editor && !Input"));
+        assert!(
+            key_binding(&nested, &DummyKeyboardMapper)
+                .unwrap()
+                .predicate()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn actions_name_themselves_and_clone() {
+        let a = RuntimeAction { name: "go".into() };
+        assert_eq!(a.name(), "levain::RuntimeAction");
+        assert_eq!(RuntimeAction::name_for_type(), "levain::RuntimeAction");
+        assert!(a.boxed_clone().partial_eq(&a));
+        assert!(RuntimeAction::build(serde_json::json!({"nom": "a"})).is_err());
+        assert!(RuntimeAction::build(serde_json::json!({})).is_err());
+    }
+
+    #[test]
+    fn a_scoped_binding_with_a_nested_context_still_binds_the_window_first() {
+        let scoped = scoped(7, &binding_of("k", "x", Some("A > B")));
+        assert_eq!(scoped.context.as_deref(), Some("levain-window-7 > (A > B)"));
+        assert_eq!(scoped.keys, "k");
+        assert_eq!(scoped.action, "x");
     }
 }

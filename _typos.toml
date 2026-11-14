@@ -1,0 +1,19 @@
+# typos: spell-check code, comments and docs. Run locally with `typos`.
+
+[files]
+extend-exclude = [
+  "*.lock",
+  "package-lock.json",
+  # Generated from GPUI's rustdoc, and the generated component catalogs.
+  "levain/src/style_gen.rs",
+  "components/*.json",
+  # Wire fixtures shared with the language hosts.
+  "fixtures/",
+  # Binary assets.
+  "*.ico",
+  "*.png",
+]
+
+[default.extend-words]
+# Both spellings are standard.
+unparseable = "unparseable"

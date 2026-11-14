@@ -1,0 +1,68 @@
+name: Release check
+
+# Proves a release would work without publishing anything: every publishable
+# crate packages and verifies (`cargo publish --dry-run`), levain-pack builds
+# with the `dist` profile releases use, and the binary names its own target as
+# release.yml's matrix expects. Keep the crate list and the matrix in step
+# with release.yml.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # Dependency order. None of these depends on another workspace crate,
+      # so each verifies before anything is on crates.io. A crate that did
+      # would need its dependency published first.
+      - name: Dry-run publish
+        run: |
+          for crate in levain-abi levain-build levain-pack; do
+            cargo publish --dry-run --locked --allow-dirty -p "$crate"
+          done
+
+  pack:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-linux
+            os: ubuntu-24.04
+          - target: aarch64-macos
+            os: macos-15
+          - target: x86_64-windows
+            os: windows-2025
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: pack-${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build
+        run: cargo build --profile dist -p levain-pack --locked
+      - name: Check the target name
+        run: |
+          built=$(target/dist/levain-pack target)
+          if [ "$built" != "${{ matrix.target }}" ]; then
+            echo "::error::built on $built, expected ${{ matrix.target }}"
+            exit 1
+          fi

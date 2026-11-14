@@ -33,11 +33,11 @@ pub(crate) fn unpack_archive(
     data_dir: &Path,
     prepare: impl FnOnce(&Path) -> Result<(), String>,
 ) -> Result<PathBuf, String> {
-    let root = data_dir.join(format!("release-{hash}"));
+    let root = data_dir.join(format!("app-{hash}"));
     if root.join(UNPACKED).is_file() {
         return Ok(root);
     }
-    let staging = data_dir.join("release-unpacking");
+    let staging = data_dir.join("app-unpacking");
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
     tar::Archive::new(flate2::read::GzDecoder::new(archive))
@@ -47,11 +47,11 @@ pub(crate) fn unpack_archive(
     std::fs::write(staging.join(UNPACKED), hash).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_dir_all(&root);
     std::fs::rename(&staging, &root).map_err(|e| e.to_string())?;
-    // Earlier builds of this app.
+    // Earlier builds of this app (`release-*` is what older hosts named them).
     for entry in std::fs::read_dir(data_dir).into_iter().flatten().flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with("release-") && path != root {
+        if (name.starts_with("release-") || name.starts_with("app-")) && path != root {
             let _ = std::fs::remove_dir_all(path);
         }
     }
@@ -123,8 +123,10 @@ mod tests {
     #[test]
     fn unpacks_once_per_build_and_drops_earlier_ones() {
         let data = tempfile::tempdir().unwrap();
-        let old = data.path().join("release-old");
+        let old = data.path().join("app-old");
+        let legacy = data.path().join("release-old");
         std::fs::create_dir_all(&old).unwrap();
+        std::fs::create_dir_all(&legacy).unwrap();
 
         let bytes = archive(&[("app.json", "{}")]);
         let mut prepared = 0;
@@ -134,9 +136,10 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        assert_eq!(root, data.path().join("release-abc"));
+        assert_eq!(root, data.path().join("app-abc"));
         assert!(root.join("app.json").is_file());
         assert!(!old.exists());
+        assert!(!legacy.exists());
 
         // The same build again: nothing to do.
         unpack_archive(&bytes, "abc", data.path(), |_| {
@@ -147,12 +150,21 @@ mod tests {
         assert_eq!(prepared, 1);
     }
 
+    #[cfg(not(levain_embedded_app))]
+    #[test]
+    fn a_host_built_without_an_app_says_so_and_unpacks_nothing() {
+        let data = tempfile::tempdir().unwrap();
+        let error = unpack(data.path(), |_| panic!("nothing to prepare")).unwrap_err();
+        assert!(error.contains("LEVAIN_APP_ARCHIVE"), "{error}");
+        assert_eq!(std::fs::read_dir(data.path()).unwrap().count(), 0);
+    }
+
     #[test]
     fn a_failed_prepare_leaves_no_app() {
         let data = tempfile::tempdir().unwrap();
         let bytes = archive(&[("app.json", "{}")]);
         let error = unpack_archive(&bytes, "abc", data.path(), |_| Err("no".into()));
         assert_eq!(error, Err("no".into()));
-        assert!(!data.path().join("release-abc").exists());
+        assert!(!data.path().join("app-abc").exists());
     }
 }

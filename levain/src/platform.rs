@@ -1,5 +1,4 @@
-//! Platform calls from Elixir (`Baguette.Clipboard`, `Baguette.Window`,
-//! `Baguette.Menu`, `Baguette.App`), run on the UI thread. GPUI does the
+//! Platform calls from the app (clipboard, window, menu and app calls), run on the UI thread. GPUI does the
 //! clipboard and appearance; Tauri, which is the platform under GPUI here,
 //! does windows, menus and opening URLs.
 
@@ -50,17 +49,33 @@ pub enum ItemSpec {
     },
 }
 
-/// Runs `json` and sends Elixir the reply: `result`, or `error` and a nil
-/// result.
-pub fn handle(json: &[u8], app: &tauri::AppHandle, cx: &mut gpui::App) {
-    let request: Request = match serde_json::from_slice(json) {
+/// What `cli.matches` says when the app declared no `cli`.
+const NO_CLI: &str = "the app declares no cli";
+
+/// Runs `json` and sends the app the reply: `result`, or `error` and a nil
+/// result. `app.exit` exits the process once its reply is sent.
+pub fn handle<R: tauri::Runtime>(
+    json: &[u8],
+    app: &tauri::AppHandle<R>,
+    open: OpenWindow,
+    cx: &mut gpui::App,
+) {
+    handle_with(json, app, open, &|code| app.exit(code), cx)
+}
+
+/// [`handle`], with `exit` as what ends the process.
+fn handle_with<R: tauri::Runtime>(
+    json: &[u8],
+    app: &tauri::AppHandle<R>,
+    open: OpenWindow,
+    exit: &dyn Fn(i32),
+    cx: &mut gpui::App,
+) {
+    let request = match parse(json) {
         Ok(request) => request,
-        Err(error) => {
-            crate::log_line(&format!("baguette: invalid platform call: {error}"));
+        Err((error, reference)) => {
+            crate::log_line(&format!("levain: invalid platform call: {error}"));
             // Answer it if it has a ref, so its caller doesn't wait.
-            let reference = serde_json::from_slice::<Value>(json)
-                .ok()
-                .and_then(|call| call["ref"].as_u64());
             if let Some(reference) = reference {
                 bridge::emit(&crate::events::reply_error(
                     reference.into(),
@@ -70,17 +85,98 @@ pub fn handle(json: &[u8], app: &tauri::AppHandle, cx: &mut gpui::App) {
             return;
         }
     };
-    let reply = match run(&request, app, cx) {
+    let outcome = run(&request, app, open, cx);
+    let exiting = (request.call == "app.exit" && outcome.is_ok())
+        .then(|| exit_code(&request.args).unwrap_or(0));
+    bridge::emit(&reply_for(&request, outcome));
+    if let Some(code) = exiting {
+        // Nothing the app printed may be lost with the process.
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stderr().flush();
+        exit(code);
+    }
+}
+
+/// The `code` of `app.exit`'s arguments: 0 when there is none.
+fn exit_code(args: &Value) -> Result<i32, String> {
+    #[derive(Deserialize)]
+    struct ExitArgs {
+        code: Option<i32>,
+    }
+    if args.is_null() {
+        return Ok(0);
+    }
+    serde_json::from_value::<ExitArgs>(args.clone())
+        .map(|args| args.code.unwrap_or(0))
+        .map_err(|e| e.to_string())
+}
+
+/// The arguments this process was started with, parsed against the app's
+/// `cli` into the plugin's matches, as JSON.
+#[cfg(desktop)]
+fn cli_matches<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<Value, String> {
+    // Registered only when the app declared a `cli`.
+    let cli = app.try_state::<tauri_plugin_cli::Cli<R>>().ok_or(NO_CLI)?;
+    let matches = cli
+        .matches_from(process_args())
+        .map_err(|e| e.to_string())?;
+    serde_json::to_value(matches).map_err(|e| e.to_string())
+}
+
+/// Phones have no command line.
+#[cfg(mobile)]
+fn cli_matches<R: tauri::Runtime>(_: &tauri::AppHandle<R>) -> Result<Value, String> {
+    Err(NO_CLI.into())
+}
+
+#[cfg(all(desktop, not(test)))]
+fn process_args() -> Vec<String> {
+    std::env::args().collect()
+}
+
+#[cfg(all(desktop, test))]
+thread_local! {
+    /// The arguments tests parse instead of the test binary's own.
+    static TEST_ARGS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(all(desktop, test))]
+fn process_args() -> Vec<String> {
+    TEST_ARGS.with(|args| args.borrow().clone())
+}
+
+/// The request in `json`; or why it isn't one, and its `ref` if it has one.
+fn parse(json: &[u8]) -> Result<Request, (serde_json::Error, Option<u64>)> {
+    serde_json::from_slice(json).map_err(|error| {
+        let reference = serde_json::from_slice::<Value>(json)
+            .ok()
+            .and_then(|call| call["ref"].as_u64());
+        (error, reference)
+    })
+}
+
+/// The reply event for how `request` went.
+fn reply_for(request: &Request, outcome: Result<Value, String>) -> Value {
+    match outcome {
         Ok(result) => crate::events::reply(request.reference.into(), result),
         Err(error) => crate::events::reply_error(
             request.reference.into(),
             format!("{}: {error}", request.call),
         ),
-    };
-    bridge::emit(&reply);
+    }
 }
 
-fn run(request: &Request, app: &tauri::AppHandle, cx: &mut gpui::App) -> Result<Value, String> {
+/// Opens window `id` with a title and a size, showing the app's first frame.
+pub type OpenWindow<'a> =
+    &'a dyn Fn(u32, &str, (f64, f64)) -> Result<(), Box<dyn std::error::Error>>;
+
+fn run<R: tauri::Runtime>(
+    request: &Request,
+    app: &tauri::AppHandle<R>,
+    open: OpenWindow,
+    cx: &mut gpui::App,
+) -> Result<Value, String> {
     let args = || -> Result<WindowArgs, String> {
         serde_json::from_value(request.args.clone()).map_err(|e| e.to_string())
     };
@@ -114,12 +210,13 @@ fn run(request: &Request, app: &tauri::AppHandle, cx: &mut gpui::App) -> Result<
             let _ = menus;
             Ok(Value::Null)
         }
+        "cli.matches" => cli_matches(app),
+        "app.exit" => exit_code(&request.args).map(|_| Value::Null),
         "window.open" => {
             let args = args()?;
             let title = args.title.unwrap_or_default();
             let size = (args.width.unwrap_or(800.), args.height.unwrap_or(600.));
-            crate::windows::open(app, args.window, &title, size, Default::default())
-                .map_err(|e| e.to_string())?;
+            open(args.window, &title, size).map_err(|e| e.to_string())?;
             Ok(Value::Null)
         }
         "window.close" => {
@@ -167,12 +264,12 @@ pub fn appearance(appearance: WindowAppearance) -> &'static str {
     }
 }
 
-fn window(app: &tauri::AppHandle, id: u32) -> Option<tauri::Window> {
+fn window<R: tauri::Runtime>(app: &tauri::AppHandle<R>, id: u32) -> Option<tauri::Window<R>> {
     app.get_window(&crate::windows::label(id))
 }
 
 /// Its title and bounds, in logical pixels.
-fn info(window: &tauri::Window) -> tauri::Result<Value> {
+fn info<R: tauri::Runtime>(window: &tauri::Window<R>) -> tauri::Result<Value> {
     let scale = window.scale_factor()?;
     let size = window.inner_size()?.to_logical::<f64>(scale);
     let position = window.outer_position()?.to_logical::<f64>(scale);
@@ -186,7 +283,10 @@ fn info(window: &tauri::Window) -> tauri::Result<Value> {
 }
 
 #[cfg(desktop)]
-fn set_menus(app: &tauri::AppHandle, menus: &[MenuSpec]) -> tauri::Result<()> {
+fn set_menus<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    menus: &[MenuSpec],
+) -> tauri::Result<()> {
     use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
     let mut bar = MenuBuilder::new(app);
     for menu in menus {
@@ -294,5 +394,642 @@ mod tests {
     fn names_appearances() {
         assert_eq!(appearance(WindowAppearance::VibrantDark), "dark");
         assert_eq!(appearance(WindowAppearance::Light), "light");
+    }
+
+    #[test]
+    fn names_every_appearance() {
+        assert_eq!(appearance(WindowAppearance::Dark), "dark");
+        assert_eq!(appearance(WindowAppearance::VibrantLight), "light");
+    }
+
+    #[test]
+    fn requests_default_to_no_args() {
+        let request = parse(br#"{"call": "clipboard.read", "ref": 1}"#).unwrap();
+        assert_eq!(request.args, Value::Null);
+        // `ref` is required, and a string is not one.
+        assert!(parse(br#"{"call": "clipboard.read"}"#).is_err());
+        assert!(parse(br#"{"call": "x", "ref": "1"}"#).is_err());
+    }
+
+    #[test]
+    fn invalid_calls_keep_their_ref_to_be_answered() {
+        // Valid JSON that isn't a request: no `call`.
+        let (error, reference) = parse(br#"{"ref": 12, "args": {}}"#).unwrap_err();
+        assert_eq!(reference, Some(12));
+        assert!(error.to_string().contains("call"), "{error}");
+        // Not JSON at all: nothing to answer.
+        assert_eq!(parse(b"not json").unwrap_err().1, None);
+        // A ref that isn't a number can't be answered either.
+        assert_eq!(parse(br#"{"ref": "x"}"#).unwrap_err().1, None);
+    }
+
+    #[test]
+    fn replies_carry_the_ref_and_the_result_or_error() {
+        let request =
+            parse(br#"{"call": "window.info", "ref": 5, "args": {"window": 1}}"#).unwrap();
+        assert_eq!(
+            reply_for(&request, Ok(json!({"title": "T"}))),
+            json!({"type": "reply", "ref": 5, "result": {"title": "T"}})
+        );
+        assert_eq!(
+            reply_for(&request, Err("no such window".into())),
+            json!({
+                "type": "reply",
+                "ref": 5,
+                "result": null,
+                "error": "window.info: no such window",
+            })
+        );
+    }
+
+    #[test]
+    fn menu_items_need_an_id_and_a_label() {
+        assert!(
+            serde_json::from_str::<MenuSpec>(r#"{"title": "File", "items": [{"id": "new"}]}"#)
+                .is_err()
+        );
+        let menu: MenuSpec = serde_json::from_str(
+            r#"{"title": "File", "items": [{"id": "new", "label": "New", "keys": null}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            menu.items,
+            [ItemSpec::Item {
+                id: "new".into(),
+                label: "New".into(),
+                keys: None
+            }]
+        );
+    }
+
+    #[test]
+    fn window_args_need_only_a_window() {
+        let args: WindowArgs =
+            serde_json::from_value(json!({"window": 1, "width": 640.5})).unwrap();
+        assert_eq!(
+            (args.window, args.width, args.height),
+            (1, Some(640.5), None)
+        );
+        assert!(serde_json::from_value::<WindowArgs>(json!({"title": "x"})).is_err());
+    }
+
+    #[test]
+    fn accelerators_keep_unknown_parts_and_capitalise_keys() {
+        assert_eq!(accelerator("platform-q"), "Cmd+Q");
+        assert_eq!(accelerator("fn-f1"), "Fn+F1");
+        assert_eq!(accelerator("escape"), "Escape");
+        assert_eq!(accelerator("secondary-shift--"), "CmdOrCtrl+Shift+-");
+    }
+}
+
+/// `handle` against Tauri's mock runtime and GPUI's test platform: the
+/// requests the app sends, and the replies it gets.
+#[cfg(test)]
+mod call_tests {
+    use super::*;
+    use crate::bridge::testing::{Harness, harness};
+    use std::cell::RefCell;
+
+    type Opened = RefCell<Vec<(u32, String, (f64, f64))>>;
+
+    /// Sends `request` and returns the one reply event.
+    fn call(
+        h: &Harness,
+        app: &tauri::App<tauri::test::MockRuntime>,
+        cx: &mut gpui_kit::TestAppContext,
+        opened: &Opened,
+        request: Value,
+    ) -> Value {
+        let open = |id: u32, title: &str, size| {
+            opened.borrow_mut().push((id, title.to_owned(), size));
+            // The window of a mock app, without GPUI in it.
+            crate::windows::build(app.handle(), id, title, size)
+                .map(drop)
+                .map_err(Into::into)
+        };
+        let json = serde_json::to_vec(&request).unwrap();
+        cx.update(|cx| handle(&json, app.handle(), &open, cx));
+        let mut events = h.events();
+        assert_eq!(events.len(), 1, "{events:?}");
+        events.remove(0)
+    }
+
+    fn setup() -> (Harness, tauri::App<tauri::test::MockRuntime>, Opened) {
+        let app = tauri::test::mock_builder()
+            .plugin(tauri_plugin_opener::init())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("a mock app");
+        (harness(), app, Opened::default())
+    }
+
+    #[gpui_kit::test]
+    fn the_clipboard_holds_what_was_written(cx: &mut gpui_kit::TestAppContext) {
+        let (h, app, opened) = setup();
+        let reply = |cx: &mut _, request| call(&h, &app, cx, &opened, request);
+        assert_eq!(
+            reply(cx, json!({"call": "clipboard.read", "ref": 1})),
+            json!({"type": "reply", "ref": 1, "result": null})
+        );
+        assert_eq!(
+            reply(
+                cx,
+                json!({"call": "clipboard.write", "ref": 2, "args": {"text": "hello"}})
+            ),
+            json!({"type": "reply", "ref": 2, "result": null})
+        );
+        assert_eq!(
+            reply(cx, json!({"call": "clipboard.read", "ref": 3})),
+            json!({"type": "reply", "ref": 3, "result": "hello"})
+        );
+        assert_eq!(
+            reply(cx, json!({"call": "clipboard.write", "ref": 4, "args": {}})),
+            json!({"type": "reply", "ref": 4, "result": null,
+                   "error": "clipboard.write: no `text`"})
+        );
+    }
+
+    #[gpui_kit::test]
+    fn the_appearance_is_light_or_dark(cx: &mut gpui_kit::TestAppContext) {
+        let (h, app, opened) = setup();
+        assert_eq!(
+            call(
+                &h,
+                &app,
+                cx,
+                &opened,
+                json!({"call": "app.appearance", "ref": 9})
+            ),
+            json!({"type": "reply", "ref": 9, "result": "light"})
+        );
+    }
+
+    #[gpui_kit::test]
+    fn calls_that_are_not_valid_are_answered_when_they_can_be(cx: &mut gpui_kit::TestAppContext) {
+        let (h, app, opened) = setup();
+        assert_eq!(
+            call(&h, &app, cx, &opened, json!({"call": "no.such", "ref": 5})),
+            json!({"type": "reply", "ref": 5, "result": null,
+                   "error": "no.such: no platform call `no.such`"})
+        );
+        // No `call`: answered, with its ref.
+        let reply = call(&h, &app, cx, &opened, json!({"ref": 6}));
+        assert_eq!(reply["ref"], 6);
+        assert!(
+            reply["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("invalid platform call")
+        );
+        // Not even a request: nothing to answer.
+        cx.update(|cx| handle(b"junk", app.handle(), &|_, _, _| Ok(()), cx));
+        assert!(h.events().is_empty());
+        // Opening a URL needs one.
+        assert_eq!(
+            call(
+                &h,
+                &app,
+                cx,
+                &opened,
+                json!({"call": "app.open_url", "ref": 7, "args": {}})
+            )["error"],
+            "app.open_url: no `url`"
+        );
+    }
+
+    #[gpui_kit::test]
+    fn windows_open_with_the_apps_title_and_size(cx: &mut gpui_kit::TestAppContext) {
+        let (h, app, opened) = setup();
+        let open = json!({"call": "window.open", "ref": 1,
+            "args": {"window": 2, "title": "Jobs", "width": 320.0, "height": 240.0}});
+        assert_eq!(
+            call(&h, &app, cx, &opened, open),
+            json!({"type": "reply", "ref": 1, "result": null})
+        );
+        // Unsized, it is 800x600.
+        call(
+            &h,
+            &app,
+            cx,
+            &opened,
+            json!({"call": "window.open", "ref": 2, "args": {"window": 3}}),
+        );
+        assert_eq!(
+            *opened.borrow(),
+            [
+                (2, "Jobs".to_owned(), (320., 240.)),
+                (3, String::new(), (800., 600.))
+            ]
+        );
+        assert!(app.get_window("window-2").is_some());
+        let bad = call(
+            &h,
+            &app,
+            cx,
+            &opened,
+            json!({"call": "window.open", "ref": 3, "args": {"title": 1}}),
+        );
+        assert!(bad["error"].as_str().unwrap().starts_with("window.open: "));
+    }
+
+    #[gpui_kit::test]
+    fn windows_are_closed_titled_resized_and_described(cx: &mut gpui_kit::TestAppContext) {
+        let (h, app, opened) = setup();
+        crate::windows::build(app.handle(), 1, "First", (300., 200.)).unwrap();
+        let mut n = 0;
+        let mut reply = |cx: &mut _, call_name: &str, args: Value| {
+            n += 1;
+            call(
+                &h,
+                &app,
+                cx,
+                &opened,
+                json!({"call": call_name, "ref": n, "args": args}),
+            )
+        };
+        // The mock runtime keeps no title or bounds: its window is a fixed one.
+        let info = reply(cx, "window.info", json!({"window": 1}));
+        let mut keys: Vec<_> = info["result"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        keys.sort();
+        assert_eq!(keys, ["height", "title", "width", "x", "y"]);
+        // Not there: no info, and no title to set.
+        assert_eq!(
+            reply(cx, "window.info", json!({"window": 9}))["result"],
+            Value::Null
+        );
+        assert_eq!(
+            reply(cx, "window.set_title", json!({"window": 9, "title": "x"}))["error"],
+            "window.set_title: no such window"
+        );
+        assert_eq!(
+            reply(cx, "window.set_bounds", json!({"window": 9, "width": 5}))["error"],
+            "window.set_bounds: no such window"
+        );
+        let titled = reply(
+            cx,
+            "window.set_title",
+            json!({"window": 1, "title": "Second"}),
+        );
+        assert_eq!(titled["result"], Value::Null);
+        let sized = reply(
+            cx,
+            "window.set_bounds",
+            json!({"window": 1, "width": 500.0, "height": 400.0, "x": 10.0, "y": 20.0}),
+        );
+        assert_eq!(sized["result"], Value::Null, "{sized}");
+        // Closing one that isn't there is not an error.
+        assert_eq!(
+            reply(cx, "window.close", json!({"window": 9}))["result"],
+            Value::Null
+        );
+        let closed = reply(cx, "window.close", json!({"window": 1}));
+        assert_eq!(closed["result"], Value::Null, "{closed}");
+    }
+
+    fn sum_cli() -> Value {
+        json!({"description": "Sums", "subcommands": {"sum": {
+            "args": [{"name": "a", "index": 1, "takesValue": true, "required": true},
+                     {"name": "b", "index": 2, "takesValue": true, "required": true},
+                     {"name": "json"}]}}})
+    }
+
+    #[cfg(desktop)]
+    #[gpui_kit::test]
+    fn cli_matches_is_what_the_plugin_parsed(cx: &mut gpui_kit::TestAppContext) {
+        let h = harness();
+        let app = fixture::cli_app(Some(sum_cli()));
+        let opened = Opened::default();
+        let ask = |cx: &mut _, argv: &[&str], n: u64| {
+            fixture::set_args(argv.iter().map(|a| a.to_string()));
+            call(
+                &h,
+                &app,
+                cx,
+                &opened,
+                json!({"call": "cli.matches", "ref": n}),
+            )
+        };
+        let reply = ask(cx, &["app", "sum", "2", "3", "--json"], 1);
+        assert_eq!(reply["ref"], 1);
+        let sub = &reply["result"]["subcommand"];
+        assert_eq!(sub["name"], "sum");
+        assert_eq!(
+            sub["matches"]["args"]["a"],
+            json!({"value": "2", "occurrences": 1})
+        );
+        assert_eq!(
+            sub["matches"]["args"]["json"],
+            json!({"value": true, "occurrences": 1})
+        );
+        // Without a subcommand: none.
+        let reply = ask(cx, &["app"], 2);
+        assert_eq!(reply["result"]["subcommand"], Value::Null);
+        // A parse error is the call's error.
+        let reply = ask(cx, &["app", "sum", "2"], 3);
+        assert_eq!(reply["result"], Value::Null);
+        assert!(
+            reply["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("cli.matches: failed to parse arguments: "),
+            "{reply}"
+        );
+        // `--help` is a match, carrying the text.
+        let reply = ask(cx, &["app", "--help"], 4);
+        assert!(
+            reply["result"]["args"]["help"]["value"]
+                .as_str()
+                .unwrap()
+                .contains("Sums")
+        );
+    }
+
+    #[gpui_kit::test]
+    fn cli_matches_without_a_declared_cli_is_an_error(cx: &mut gpui_kit::TestAppContext) {
+        let (h, app, opened) = setup();
+        assert_eq!(
+            call(
+                &h,
+                &app,
+                cx,
+                &opened,
+                json!({"call": "cli.matches", "ref": 1})
+            ),
+            json!({"type": "reply", "ref": 1, "result": null,
+                   "error": "cli.matches: the app declares no cli"})
+        );
+    }
+
+    /// Sends `request` to a mock app whose process exit is recorded in
+    /// `exits`; returns the reply events and what the log held at exit.
+    fn call_exiting(
+        cx: &mut gpui_kit::TestAppContext,
+        request: Value,
+    ) -> (Vec<Value>, Vec<(i32, usize)>) {
+        let (h, app, _) = setup();
+        let json = serde_json::to_vec(&request).unwrap();
+        let exits = RefCell::new(Vec::new());
+        cx.update(|cx| {
+            // The reply must already be sent when the process exits.
+            handle_with(
+                &json,
+                app.handle(),
+                &|_, _, _| Ok(()),
+                &|code| exits.borrow_mut().push((code, h.events().len())),
+                cx,
+            )
+        });
+        (h.events(), exits.into_inner())
+    }
+
+    #[gpui_kit::test]
+    fn app_exit_replies_then_exits_with_the_code(cx: &mut gpui_kit::TestAppContext) {
+        // The exit sees the reply already sent (and drains it), so the
+        // events after it are none.
+        let (events, exits) = call_exiting(
+            cx,
+            json!({"call": "app.exit", "ref": 1, "args": {"code": 3}}),
+        );
+        assert_eq!(exits, [(3, 1)]);
+        assert!(events.is_empty());
+    }
+
+    #[gpui_kit::test]
+    fn app_exit_defaults_to_code_zero(cx: &mut gpui_kit::TestAppContext) {
+        for request in [
+            json!({"call": "app.exit", "ref": 1}),
+            json!({"call": "app.exit", "ref": 1, "args": {}}),
+            json!({"call": "app.exit", "ref": 1, "args": {"code": null}}),
+        ] {
+            let (_, exits) = call_exiting(cx, request);
+            assert_eq!(exits, [(0, 1)]);
+        }
+    }
+
+    #[gpui_kit::test]
+    fn app_exit_with_a_bad_code_replies_an_error_and_stays(cx: &mut gpui_kit::TestAppContext) {
+        let (events, exits) = call_exiting(
+            cx,
+            json!({"call": "app.exit", "ref": 4, "args": {"code": "one"}}),
+        );
+        assert_eq!(exits, []);
+        assert_eq!(
+            events,
+            [json!({"type": "reply", "ref": 4, "result": null,
+                    "error": "app.exit: invalid type: string \"one\", expected i32"})]
+        );
+    }
+
+    // macOS builds menu items through muda, which refuses to make one off
+    // the main thread; a test runs on a worker thread.
+    #[cfg(all(desktop, not(target_os = "macos")))]
+    #[gpui_kit::test]
+    fn the_menu_bar_is_set_from_the_apps_menus(cx: &mut gpui_kit::TestAppContext) {
+        let (h, app, opened) = setup();
+        let menus = json!([{"title": "File", "items": [
+            {"id": "new", "label": "New", "keys": "secondary-n"},
+            {"separator": true},
+            {"id": "quit", "label": "Quit"}]}]);
+        let reply = call(
+            &h,
+            &app,
+            cx,
+            &opened,
+            json!({"call": "menu.set", "ref": 1, "args": {"menus": menus}}),
+        );
+        assert_eq!(reply, json!({"type": "reply", "ref": 1, "result": null}));
+        let bar = app.menu().expect("a menu bar");
+        let items = bar.items().unwrap();
+        assert_eq!(items.len(), 1);
+        let bad = call(
+            &h,
+            &app,
+            cx,
+            &opened,
+            json!({"call": "menu.set", "ref": 2, "args": {"menus": [{"title": 1}]}}),
+        );
+        assert!(bad["error"].as_str().unwrap().starts_with("menu.set: "));
+    }
+}
+
+/// Builds `reply` events for `fixtures/events.json` through the request
+/// parser and [`reply_for`].
+#[cfg(test)]
+pub(crate) mod fixture {
+    // Also the tests of `fixtures/calls.json`, the requests.
+    use super::*;
+
+    pub(crate) fn event(name: &str, a: &Value) -> Option<Value> {
+        Some(match name {
+            // A request that ran: `ok` is its result, `err` its error.
+            "reply_for" => {
+                let request = Request {
+                    call: a["call"].as_str().unwrap().into(),
+                    reference: a["ref"].as_u64().unwrap(),
+                    args: Value::Null,
+                };
+                let outcome = match a.get("err") {
+                    Some(err) => Err(err.as_str().unwrap().to_owned()),
+                    None => Ok(a["ok"].clone()),
+                };
+                reply_for(&request, outcome)
+            }
+            // Text that isn't a request, but has a `ref` to answer, as
+            // `handle` answers it.
+            "reply_invalid" => {
+                let (error, reference) = parse(a["request"].as_str().unwrap().as_bytes())
+                    .expect_err("an invalid request");
+                crate::events::reply_error(
+                    reference.expect("a ref").into(),
+                    format!("invalid platform call: {error}"),
+                )
+            }
+            // `cli.matches` for the process arguments `argv`, against the
+            // app's `cli` (null: it declares none): the plugin's own matches.
+            "reply_cli_matches" => {
+                let app = cli_app(a.get("cli").filter(|cli| !cli.is_null()).cloned());
+                let argv = a["argv"].as_array().unwrap();
+                set_args(argv.iter().map(|arg| arg.as_str().unwrap().to_owned()));
+                let request = Request {
+                    call: "cli.matches".into(),
+                    reference: a["ref"].as_u64().unwrap(),
+                    args: Value::Null,
+                };
+                reply_for(&request, cli_matches(app.handle()))
+            }
+            _ => return None,
+        })
+    }
+
+    /// A mock app whose `cli` is declared as `run` declares it, if it is.
+    pub(crate) fn cli_app(cli: Option<Value>) -> tauri::App<tauri::test::MockRuntime> {
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        let mut builder = tauri::test::mock_builder();
+        if let Some(cli) = cli {
+            context.config_mut().plugins.0.insert("cli".into(), cli);
+            builder = builder.plugin(tauri_plugin_cli::init());
+        }
+        builder.build(context).expect("a mock app")
+    }
+
+    /// The process arguments `cli.matches` parses, for this test.
+    pub(crate) fn set_args(args: impl IntoIterator<Item = String>) {
+        TEST_ARGS.with(|a| *a.borrow_mut() = args.into_iter().collect());
+    }
+
+    /// What `run` does with `request`'s arguments before it needs a window
+    /// or the platform: the error it fails with, if any.
+    fn args_error(request: &Request) -> Option<String> {
+        let text = |key: &str| {
+            request.args[key]
+                .as_str()
+                .map_or(Some(format!("no `{key}`")), |_| None)
+        };
+        let window = || {
+            serde_json::from_value::<WindowArgs>(request.args.clone())
+                .err()
+                .map(|e| e.to_string())
+        };
+        match request.call.as_str() {
+            "clipboard.read" | "app.appearance" | "cli.matches" => None,
+            "app.exit" => exit_code(&request.args).err(),
+            "clipboard.write" => text("text"),
+            "app.open_url" => text("url"),
+            "menu.set" => serde_json::from_value::<Vec<MenuSpec>>(request.args["menus"].clone())
+                .err()
+                .map(|e| e.to_string()),
+            "window.open" | "window.close" | "window.set_title" | "window.set_bounds"
+            | "window.info" => window(),
+            other => Some(format!("no platform call `{other}`")),
+        }
+    }
+
+    const CALLS: [&str; 12] = [
+        "clipboard.read",
+        "clipboard.write",
+        "app.appearance",
+        "app.open_url",
+        "menu.set",
+        "window.open",
+        "window.close",
+        "window.set_title",
+        "window.set_bounds",
+        "window.info",
+        "cli.matches",
+        "app.exit",
+    ];
+
+    fn calls_fixture() -> Vec<Value> {
+        serde_json::from_str(include_str!("../../fixtures/calls.json")).unwrap()
+    }
+
+    #[test]
+    fn every_call_fixture_request_parses() {
+        let mut seen = std::collections::BTreeSet::new();
+        for case in calls_fixture().iter().filter(|c| c.get("reply").is_none()) {
+            let json = serde_json::to_vec(&case["json"]).unwrap();
+            let request = parse(&json).unwrap_or_else(|(e, _)| panic!("{}: {e}", case["name"]));
+            assert_eq!(request.call, case["json"]["call"], "{}", case["name"]);
+            assert_eq!(request.reference, case["json"]["ref"], "{}", case["name"]);
+            assert_eq!(request.args, case["json"]["args"], "{}", case["name"]);
+            // Its arguments are ones the call accepts.
+            assert_eq!(args_error(&request), None, "{}", case["name"]);
+            seen.insert(request.call);
+        }
+        assert_eq!(seen.into_iter().collect::<Vec<_>>(), {
+            let mut all = CALLS.map(String::from).to_vec();
+            all.sort();
+            all
+        });
+    }
+
+    #[test]
+    fn the_fixture_names_the_calls_run_handles() {
+        // `run`'s match arms, read from the source.
+        let source = include_str!("platform.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        let handled: std::collections::BTreeSet<&str> = source
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix('"')?.split_once("\" =>"))
+            .map(|(name, _)| name)
+            .filter(|n| n.contains('.'))
+            .collect();
+        assert_eq!(handled, CALLS.into_iter().collect());
+    }
+
+    #[test]
+    fn invalid_call_fixture_requests_get_the_stated_reply() {
+        let mut answered = 0;
+        for case in calls_fixture().iter().filter(|c| c.get("reply").is_some()) {
+            let name = &case["name"];
+            let reply = match case["raw"].as_str() {
+                // Text that isn't a request: `handle`'s answer, if it has a ref.
+                Some(raw) => match parse(raw.as_bytes()) {
+                    Ok(_) => panic!("{name}: parses"),
+                    Err((error, reference)) => reference.map_or(Value::Null, |reference| {
+                        crate::events::reply_error(
+                            reference.into(),
+                            format!("invalid platform call: {error}"),
+                        )
+                    }),
+                },
+                // A request `run` fails on, before it needs a window.
+                None => {
+                    let json = serde_json::to_vec(&case["json"]).unwrap();
+                    let request = parse(&json).unwrap_or_else(|(e, _)| panic!("{name}: {e}"));
+                    let error = args_error(&request).unwrap_or_else(|| panic!("{name}: no error"));
+                    reply_for(&request, Err(error))
+                }
+            };
+            assert_eq!(reply, case["reply"], "{name}");
+            answered += usize::from(!reply.is_null());
+        }
+        assert!(answered > 0);
     }
 }

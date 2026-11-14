@@ -1,0 +1,5 @@
+//! The iOS app's static library: the host, whose `run` is the app's entry
+//! point (`tauri::mobile_entry_point` exports it as `start_app`, which the
+//! Xcode project's `main` calls).
+
+pub use {{host_lib}}::run;

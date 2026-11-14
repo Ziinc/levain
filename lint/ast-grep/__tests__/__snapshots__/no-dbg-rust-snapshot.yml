@@ -1,0 +1,20 @@
+id: no-dbg-rust
+snapshots:
+  ? |
+    fn doubles(x: u32) -> u32 {
+      dbg!(x * 2)
+    }
+  : labels:
+    - source: dbg!(x * 2)
+      style: primary
+      start: 30
+      end: 41
+  ? |
+    fn marker() {
+      dbg!();
+    }
+  : labels:
+    - source: dbg!()
+      style: primary
+      start: 16
+      end: 22

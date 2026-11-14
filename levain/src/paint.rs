@@ -187,9 +187,26 @@ pub fn path(d: &str) -> Vec<Segment> {
     segments
 }
 
+/// One thing to put on screen.
+pub enum Draw {
+    Quad(gpui::PaintQuad),
+    Path(gpui::Path<Pixels>, Hsla),
+}
+
 /// Paints `shapes` with `origin` as their (0, 0).
 pub fn paint(shapes: &[Shape], origin: Point<Pixels>, window: &mut gpui::Window) {
+    for draw in commands(shapes, origin) {
+        match draw {
+            Draw::Quad(quad) => window.paint_quad(quad),
+            Draw::Path(path, color) => window.paint_path(path, color),
+        }
+    }
+}
+
+/// What painting `shapes` draws, in order, with `origin` as their (0, 0).
+pub fn commands(shapes: &[Shape], origin: Point<Pixels>) -> Vec<Draw> {
     let at = |x: f32, y: f32| origin + point(px(x), px(y));
+    let mut draws = Vec::new();
     for shape in shapes {
         match &shape.geometry {
             Geometry::Rect {
@@ -198,9 +215,9 @@ pub fn paint(shapes: &[Shape], origin: Point<Pixels>, window: &mut gpui::Window)
                 width,
                 height,
                 radius,
-            } => quad(shape, at(*x, *y), *width, *height, *radius, window),
+            } => draws.push(quad(shape, at(*x, *y), *width, *height, *radius)),
             Geometry::Circle { cx, cy, r } => {
-                quad(shape, at(cx - r, cy - r), r * 2., r * 2., *r, window)
+                draws.push(quad(shape, at(cx - r, cy - r), r * 2., r * 2., *r))
             }
             Geometry::Path(segments) => {
                 let closed = segments.contains(&Segment::Close);
@@ -208,29 +225,23 @@ pub fn paint(shapes: &[Shape], origin: Point<Pixels>, window: &mut gpui::Window)
                     let mut builder = gpui::PathBuilder::fill();
                     trace(&mut builder, segments, &at);
                     if let Ok(path) = builder.build() {
-                        window.paint_path(path, fill);
+                        draws.push(Draw::Path(path, fill));
                     }
                 }
                 if let Some(stroke) = shape.stroke {
                     let mut builder = gpui::PathBuilder::stroke(px(shape.stroke_width));
                     trace(&mut builder, segments, &at);
                     if let Ok(path) = builder.build() {
-                        window.paint_path(path, stroke);
+                        draws.push(Draw::Path(path, stroke));
                     }
                 }
             }
         }
     }
+    draws
 }
 
-fn quad(
-    shape: &Shape,
-    origin: Point<Pixels>,
-    width: f32,
-    height: f32,
-    radius: f32,
-    window: &mut gpui::Window,
-) {
+fn quad(shape: &Shape, origin: Point<Pixels>, width: f32, height: f32, radius: f32) -> Draw {
     let bounds = gpui::Bounds::new(origin, gpui::size(px(width), px(height)));
     let fill = shape.fill.unwrap_or(gpui::transparent_black());
     let mut quad = gpui::fill(bounds, fill).corner_radii(px(radius));
@@ -239,7 +250,7 @@ fn quad(
             .border_widths(px(shape.stroke_width))
             .border_color(stroke);
     }
-    window.paint_quad(quad);
+    Draw::Quad(quad)
 }
 
 fn trace(
@@ -348,5 +359,254 @@ mod tests {
         // Stops at what it doesn't know (relative commands, arcs).
         assert_eq!(path("M 1 1 l 2 2 L 5 5"), vec![Segment::Move(1., 1.)]);
         assert_eq!(path("M 1"), vec![]);
+    }
+
+    fn one(tag: &str, attrs: &[(&str, &str)], theme: &Theme) -> Shape {
+        shapes(&[el(tag, attrs)], theme).pop().expect("a shape")
+    }
+
+    #[test]
+    fn lines_run_between_their_endpoints_in_black() {
+        let line = one(
+            "line",
+            &[("x1", "1"), ("y1", "2"), ("x2", "3"), ("y2", "4")],
+            &Theme::new(),
+        );
+        assert_eq!(
+            line.geometry,
+            Geometry::Path(vec![Segment::Move(1., 2.), Segment::Line(3., 4.)])
+        );
+        assert_eq!((line.fill, line.stroke), (None, Some(gpui::black())));
+        assert_eq!(line.stroke_width, 1.);
+    }
+
+    #[test]
+    fn closed_shapes_without_a_colour_are_filled_black() {
+        let theme = Theme::new();
+        for (tag, attrs) in [
+            ("rect", &[][..]),
+            ("circle", &[]),
+            ("polygon", &[("points", "0,0 4,0 4,4")]),
+            ("path", &[("d", "M 0 0 L 5 5")]),
+        ] {
+            let shape = one(tag, attrs, &theme);
+            assert_eq!(
+                (shape.fill, shape.stroke),
+                (Some(gpui::black()), None),
+                "{tag}"
+            );
+        }
+    }
+
+    #[test]
+    fn polygons_close_and_odd_coordinates_are_dropped() {
+        let polygon = one("polygon", &[("points", "0,0 10,0  10,10 7")], &Theme::new());
+        assert_eq!(
+            polygon.geometry,
+            Geometry::Path(vec![
+                Segment::Move(0., 0.),
+                Segment::Line(10., 0.),
+                Segment::Line(10., 10.),
+                Segment::Close,
+            ])
+        );
+        // No points: nothing to draw, but still a shape.
+        let empty = one("polyline", &[], &Theme::new());
+        assert_eq!(empty.geometry, Geometry::Path(vec![]));
+    }
+
+    #[test]
+    fn colours_come_from_fill_and_stroke_classes() {
+        let theme: Theme = [("danger".to_string(), "#ff0000".to_string())].into();
+        let both = one(
+            "rect",
+            &[
+                ("class", "w-4 fill-[#00ff00] stroke-danger"),
+                ("stroke-width", "2.5"),
+            ],
+            &theme,
+        );
+        assert_eq!(both.fill, style::color("[#00ff00]", &theme),);
+        assert_eq!(both.stroke, style::color("danger", &theme));
+        assert_eq!(both.stroke_width, 2.5);
+        // A token the theme lacks is no colour: the shape falls back to black.
+        let unknown = one("rect", &[("class", "fill-nope")], &theme);
+        assert_eq!(unknown.fill, Some(gpui::black()));
+        // Only a stroke class leaves the fill off.
+        let outline = one("circle", &[("class", "stroke-danger")], &theme);
+        assert_eq!(outline.fill, None);
+        // A bad width keeps the default.
+        let wide = one("rect", &[("stroke-width", "thick")], &theme);
+        assert_eq!(wide.stroke_width, 1.);
+    }
+
+    #[test]
+    fn numbers_tolerate_whitespace_and_junk() {
+        let theme = Theme::new();
+        let rect = one(
+            "rect",
+            &[("x", " 4 "), ("y", "oops"), ("width", "-2"), ("rx", "1.5")],
+            &theme,
+        );
+        assert_eq!(
+            rect.geometry,
+            Geometry::Rect {
+                x: 4.,
+                y: 0.,
+                width: -2.,
+                height: 0.,
+                radius: 1.5
+            }
+        );
+    }
+
+    #[test]
+    fn path_data_relative_to_the_pen() {
+        // `H` and `V` keep the other coordinate of the last point, also after
+        // curves.
+        assert_eq!(
+            path("M 1 2 C 0 0 0 0 5 6 H 9 V 1"),
+            vec![
+                Segment::Move(1., 2.),
+                Segment::Cubic(0., 0., 0., 0., 5., 6.),
+                Segment::Line(9., 6.),
+                Segment::Line(9., 1.),
+            ]
+        );
+        assert_eq!(
+            path("M 0 0 Q 1 2 3 4 V 9"),
+            vec![
+                Segment::Move(0., 0.),
+                Segment::Quad(1., 2., 3., 4.),
+                Segment::Line(3., 9.),
+            ]
+        );
+    }
+
+    #[test]
+    fn path_data_ends_at_bad_numbers_and_accepts_lowercase_z() {
+        assert_eq!(path("M 0 0 L 1 x L 5 5"), vec![Segment::Move(0., 0.)],);
+        // Too few numbers for the command.
+        assert_eq!(path("M 0 0 L 4"), vec![Segment::Move(0., 0.)]);
+        assert_eq!(
+            path("M0,0L3,4z"),
+            vec![Segment::Move(0., 0.), Segment::Line(3., 4.), Segment::Close]
+        );
+        assert_eq!(path(""), vec![]);
+        assert_eq!(path("   "), vec![]);
+    }
+
+    fn drawn(children: &[Node], origin: (f32, f32)) -> Vec<Draw> {
+        let theme: Theme = [("primary".to_string(), "#ff0000".to_string())].into();
+        commands(&shapes(children, &theme), point(px(origin.0), px(origin.1)))
+    }
+
+    fn red() -> Hsla {
+        Hsla::from(gpui::rgb(0xff0000))
+    }
+
+    #[test]
+    fn a_rect_is_a_quad_from_the_origin() {
+        let draws = drawn(
+            &[el(
+                "rect",
+                &[
+                    ("x", "1"),
+                    ("y", "2"),
+                    ("width", "30"),
+                    ("height", "40"),
+                    ("rx", "5"),
+                    ("class", "fill-primary stroke-primary"),
+                    ("stroke-width", "2"),
+                ],
+            )],
+            (100., 200.),
+        );
+        let [Draw::Quad(quad)] = &draws[..] else {
+            panic!("{} draws", draws.len());
+        };
+        assert_eq!(quad.bounds.origin, point(px(101.), px(202.)));
+        assert_eq!(quad.bounds.size, gpui::size(px(30.), px(40.)));
+        assert_eq!(quad.corner_radii, gpui::Corners::all(px(5.)));
+        assert_eq!(quad.border_widths, gpui::Edges::all(px(2.)));
+        assert_eq!(quad.border_color, red());
+    }
+
+    #[test]
+    fn a_circle_is_a_round_quad_centred_on_its_point() {
+        let draws = drawn(
+            &[el("circle", &[("cx", "10"), ("cy", "10"), ("r", "4")])],
+            (0., 0.),
+        );
+        let [Draw::Quad(quad)] = &draws[..] else {
+            panic!("{} draws", draws.len());
+        };
+        assert_eq!(quad.bounds.origin, point(px(6.), px(6.)));
+        assert_eq!(quad.bounds.size, gpui::size(px(8.), px(8.)));
+        assert_eq!(quad.corner_radii, gpui::Corners::all(px(4.)));
+        // No class: filled black, with no border.
+        assert_eq!(quad.border_widths, gpui::Edges::all(px(0.)));
+    }
+
+    #[test]
+    fn a_closed_path_is_filled_then_stroked_and_a_line_only_stroked() {
+        let draws = drawn(
+            &[
+                el(
+                    "path",
+                    &[
+                        ("d", "M 0 0 L 10 0 L 10 10 Z"),
+                        ("class", "fill-primary stroke-primary"),
+                    ],
+                ),
+                el(
+                    "line",
+                    &[("x2", "20"), ("y2", "5"), ("class", "stroke-primary")],
+                ),
+                el("polyline", &[("points", "0,0 5,5 10,0")]),
+            ],
+            (50., 50.),
+        );
+        let paths: Vec<(&gpui::Path<Pixels>, Hsla)> = draws
+            .iter()
+            .map(|draw| match draw {
+                Draw::Path(path, color) => (path, *color),
+                Draw::Quad(_) => panic!("a path is not a quad"),
+            })
+            .collect();
+        // The fill, the stroke, the line and the polyline (black, by default).
+        assert_eq!(paths.len(), 4);
+        assert_eq!(paths[0].1, red());
+        assert_eq!(paths[1].1, red());
+        assert_eq!(paths[2].1, red());
+        assert_eq!(paths[3].1, gpui::black());
+        // The fill covers the triangle, from the origin.
+        assert_eq!(paths[0].0.bounds.origin, point(px(50.), px(50.)));
+        assert_eq!(paths[0].0.bounds.size, gpui::size(px(10.), px(10.)));
+        // The stroke of the line is as wide as the line is long (and a hair more).
+        assert!(paths[2].0.bounds.size.width >= px(20.));
+    }
+
+    #[test]
+    fn curves_are_traced_through_their_control_points() {
+        let draws = drawn(
+            &[
+                el(
+                    "path",
+                    &[
+                        ("d", "M 0 0 C 0 20 20 20 20 0 Q 30 -10 40 0"),
+                        ("class", "stroke-primary"),
+                    ],
+                ),
+                el("circle", &[("r", "0")]),
+            ],
+            (0., 0.),
+        );
+        let Draw::Path(path, _) = &draws[0] else {
+            panic!("not a path");
+        };
+        assert!(path.bounds.size.width >= px(40.), "{:?}", path.bounds);
+        assert!(path.bounds.size.height > px(0.));
+        assert!(matches!(draws[1], Draw::Quad(_)));
     }
 }

@@ -26,11 +26,13 @@ mod portal;
 mod runtime;
 mod style;
 mod style_gen;
+#[cfg(test)]
+mod testing;
 mod view;
 mod windows;
 
 pub use levain_abi;
-pub use runtime::{App, AppPaths, Runtime, WindowConfig};
+pub use runtime::{App, AppPaths, Runtime, WindowConfig, cli_from_app_json};
 pub use tauri;
 
 use crate::view::{Frame, Node};
@@ -54,8 +56,10 @@ pub(crate) fn notice(text: String) -> Frame {
 /// `tauri::generate_context!()`, so its `tauri.conf.json` names the app.
 ///
 /// On desktop, `--manifest [set]` prints the registered native components,
-/// all or one set's, and exits.
-pub fn run<R: Runtime>(runtime: R, context: tauri::Context<tauri::Wry>) {
+/// all or one set's, and exits. An app that declares a `cli` (`App::cli`)
+/// gets Tauri's CLI plugin, configured with it, and no window 0 until it
+/// renders to it: see `cli.matches` and `app.exit`.
+pub fn run<R: Runtime>(runtime: R, #[allow(unused_mut)] mut context: tauri::Context<tauri::Wry>) {
     #[cfg(desktop)]
     if let Some(manifest) = manifest_arg(&std::env::args().collect::<Vec<_>>()) {
         match manifest {
@@ -78,24 +82,49 @@ pub fn run<R: Runtime>(runtime: R, context: tauri::Context<tauri::Wry>) {
     }
     let (host, inbox) = bridge::install();
 
+    // On desktop the app is located before Tauri is built: its `cli` goes
+    // into the plugin config, which the context carries. On phones, which
+    // have no command line, it is located in `setup`.
+    #[cfg(desktop)]
+    let located = runtime.locate(&desktop_paths(&context));
+    #[cfg(desktop)]
+    let cli = located.as_ref().ok().and_then(|app| app.cli.clone());
+    #[cfg(desktop)]
+    if let Some(cli) = &cli {
+        context
+            .config_mut()
+            .plugins
+            .0
+            .insert("cli".into(), cli.clone());
+    }
+
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init());
-    // Menus are desktop only.
+    // Menus and the command line are desktop only.
     #[cfg(desktop)]
     let builder = builder.on_menu_event(|_, event| platform::on_menu_event(event));
+    #[cfg(desktop)]
+    let builder = match cli {
+        Some(_) => builder.plugin(tauri_plugin_cli::init()),
+        None => builder,
+    };
     builder
         .setup(move |app| {
             pick::install(app.handle().clone());
-            use tauri::Manager;
-            let paths = AppPaths {
-                exe: std::env::current_exe().ok(),
-                resources: app.path().resource_dir().ok(),
-                data: app.path().app_local_data_dir().ok(),
+            #[cfg(mobile)]
+            let located = {
+                use tauri::Manager;
+                runtime.locate(&AppPaths {
+                    exe: std::env::current_exe().ok(),
+                    resources: app.path().resource_dir().ok(),
+                    data: app.path().app_local_data_dir().ok(),
+                })
             };
-            let located = runtime.locate(&paths);
+            let zero = lazy_zero(&located);
             let handle = app.handle().clone();
-            let bridge::Inbox { renders, calls } = inbox;
+            let handle2 = handle.clone();
+            let lazy = zero.clone();
             tauri_plugin_gpui::init_with(
                 app,
                 tauri_plugin_gpui::GpuiConfig::new()
@@ -103,31 +132,17 @@ pub fn run<R: Runtime>(runtime: R, context: tauri::Context<tauri::Wry>) {
                     // and every lucide icon, for `<icon name="...">`.
                     .assets(gpui_kit::assets::AllAssets)
                     .on_launch(move |cx| {
-                        // gpui-kit's components: text inputs and checkboxes.
-                        gpui_kit::init(cx);
+                        let open = move |id, title: &str, size| {
+                            windows::open(&handle, id, title, size, Frame::default())
+                        };
                         portal::watch(cx);
-                        #[cfg(feature = "playwright")]
-                        playwright::start(cx);
-                        cx.spawn(async move |cx| {
-                            let mut first = true;
-                            while let Ok(msg) = renders.recv().await {
-                                if std::mem::take(&mut first) {
-                                    log_line("levain: first frame");
-                                }
-                                cx.update(|cx| windows::route(msg, cx));
-                            }
-                        })
-                        .detach();
-                        cx.spawn(async move |cx| {
-                            while let Ok(json) = calls.recv().await {
-                                cx.update(|cx| platform::handle(&json, &handle, cx));
-                            }
-                        })
-                        .detach();
+                        launch(cx, inbox, handle2, open, lazy)
                     }),
             )?;
-            let (title, size, frame) = window_zero(&located);
-            windows::open(app.handle(), 0, &title, size, frame)?;
+            if zero.is_none() {
+                let (title, size, frame) = window_zero(&located);
+                windows::open(app.handle(), 0, &title, size, frame)?;
+            }
 
             if let Ok(found) = located {
                 runtime.start(found, host)?;
@@ -136,6 +151,71 @@ pub fn run<R: Runtime>(runtime: R, context: tauri::Context<tauri::Wry>) {
         })
         .run(context)
         .expect("error while running the levain host");
+}
+
+/// Where the app may be found without a Tauri app: next to the executable,
+/// or in the bundle's resources (the directory `app.path().resource_dir()`
+/// names). The data directory needs the app's identifier resolved by Tauri's
+/// path resolver, so it is `None`: only phones unpack into it.
+#[cfg(desktop)]
+fn desktop_paths(context: &tauri::Context<tauri::Wry>) -> AppPaths {
+    AppPaths {
+        exe: std::env::current_exe().ok(),
+        resources: tauri::utils::platform::resource_dir(
+            context.package_info(),
+            &tauri::Env::default(),
+        )
+        .ok(),
+        data: None,
+    }
+}
+
+/// Starts GPUI's side of the host once its app is up: gpui-kit's components
+/// and the loops that show the app's renders and
+/// run its platform calls on the UI thread. `zero` is window 0's title and
+/// size while it is not open yet (see [`windows::Opener`]).
+fn launch<R: tauri::Runtime>(
+    cx: &mut tauri_plugin_gpui::gpui::App,
+    inbox: bridge::Inbox,
+    app: tauri::AppHandle<R>,
+    open: impl Fn(u32, &str, (f64, f64)) -> Result<(), Box<dyn std::error::Error>> + 'static,
+    zero: Option<windows::Zero>,
+) {
+    // gpui-kit's components: text inputs and checkboxes.
+    gpui_kit::init(cx);
+    #[cfg(feature = "playwright")]
+    playwright::start(cx);
+    let bridge::Inbox { renders, calls } = inbox;
+    let opener = std::rc::Rc::new(windows::Opener::new(open, zero));
+    let opens = opener.clone();
+    cx.spawn(async move |cx| {
+        let mut first = true;
+        while let Ok(msg) = renders.recv().await {
+            if std::mem::take(&mut first) {
+                log_line("levain: first frame");
+            }
+            cx.update(|cx| opens.route(msg, cx));
+        }
+    })
+    .detach();
+    cx.spawn(async move |cx| {
+        while let Ok(json) = calls.recv().await {
+            let open = |id: u32, title: &str, size: (f64, f64)| opener.open(id, title, size);
+            cx.update(|cx| platform::handle(&json, &app, &open, cx));
+        }
+    })
+    .detach();
+}
+
+/// Window 0's title and size, if it is to wait for the app to render to it:
+/// the app declares a `cli` (desktop only), so it may run headless.
+fn lazy_zero(located: &Result<App, String>) -> Option<windows::Zero> {
+    let app = located.as_ref().ok()?;
+    if !cfg!(desktop) || app.cli.is_none() {
+        return None;
+    }
+    let (title, size, _) = window_zero(located);
+    Some((title, size))
 }
 
 /// Window 0's title, size and first frame: the app's, or a notice of why
@@ -210,6 +290,48 @@ mod tests {
         );
     }
 
+    #[gpui_kit::test]
+    fn launching_shows_the_apps_renders_and_runs_its_calls(cx: &mut gpui_kit::TestAppContext) {
+        use crate::view::Node;
+        let h = bridge::testing::harness();
+        let app = tauri::test::mock_app();
+        crate::testing::window(cx, 0);
+        h.events();
+        let inbox = bridge::Inbox {
+            renders: h.inbox.renders.clone(),
+            calls: h.inbox.calls.clone(),
+        };
+        let opened = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let log = opened.clone();
+        cx.update(|cx| {
+            launch(
+                cx,
+                inbox,
+                app.handle().clone(),
+                move |id, title: &str, size| {
+                    log.borrow_mut().push((id, title.to_owned(), size));
+                    Ok(())
+                },
+                None,
+            )
+        });
+        // The app renders window 0 and asks for window 4.
+        let ctx = h.api.ctx;
+        let frame = br#"{"root": "from the app"}"#;
+        (h.api.render)(ctx, 0, frame.as_ptr(), frame.len());
+        let call = br#"{"call": "window.open", "ref": 3, "args": {"window": 4, "title": "Four"}}"#;
+        (h.api.call)(ctx, call.as_ptr(), call.len());
+        cx.run_until_parked();
+        let shown =
+            cx.update(|cx| windows::root_of(0, cx).map(|root| root.read(cx).frame.root.clone()));
+        assert_eq!(shown, Some(Some(Node::Text("from the app".into()))));
+        assert_eq!(*opened.borrow(), [(4, "Four".to_owned(), (800., 600.))]);
+        assert_eq!(
+            h.events().last(),
+            Some(&serde_json::json!({"type": "reply", "ref": 3, "result": null}))
+        );
+    }
+
     #[test]
     fn window_zero_is_the_apps_or_a_notice() {
         let app = App {
@@ -220,11 +342,50 @@ mod tests {
                 width: 320.0,
                 height: 200.0,
             },
+            cli: None,
         };
         let (title, size, frame) = window_zero(&Ok(app));
         assert_eq!((title.as_str(), size), ("counter", (320.0, 200.0)));
         assert!(frame.root.is_none());
         let (_, _, frame) = window_zero(&Err("missing".into()));
         assert!(frame.root.is_some());
+    }
+
+    fn app_with_cli(cli: Option<serde_json::Value>) -> App {
+        App {
+            root: "/app".into(),
+            name: "counter".into(),
+            window: WindowConfig {
+                title: Some("Counter".into()),
+                width: 320.0,
+                height: 200.0,
+            },
+            cli,
+        }
+    }
+
+    #[test]
+    fn window_zero_waits_only_for_an_app_with_a_cli() {
+        let with = lazy_zero(&Ok(app_with_cli(Some(serde_json::json!({})))));
+        assert_eq!(
+            with,
+            cfg!(desktop).then(|| ("Counter".to_owned(), (320., 200.)))
+        );
+        assert_eq!(lazy_zero(&Ok(app_with_cli(None))), None);
+        // No app: the notice opens at once.
+        assert_eq!(lazy_zero(&Err("missing".into())), None);
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn desktop_paths_need_no_tauri_app() {
+        let context = tauri::test::mock_context(tauri::test::noop_assets());
+        let paths = desktop_paths(&context);
+        assert_eq!(paths.exe, std::env::current_exe().ok());
+        // The directory the app's path resolver names.
+        let app = tauri::test::mock_app();
+        use tauri::Manager;
+        assert_eq!(paths.resources, app.path().resource_dir().ok());
+        assert_eq!(paths.data, None);
     }
 }

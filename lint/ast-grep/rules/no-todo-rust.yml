@@ -1,0 +1,23 @@
+id: no-todo-rust
+language: rust
+severity: error
+message: >
+  Do not leave todo!() or unimplemented!() in shipped code: they panic at run
+  time. Return an error for the unsupported case, or finish the code. Both
+  stay allowed in tests.
+files:
+  - "**/*.rs"
+ignores:
+  - "**/tests.rs"
+  - "**/tests/**"
+rule:
+  any:
+    - pattern: todo!($$$)
+    - pattern: unimplemented!($$$)
+  not:
+    inside:
+      kind: mod_item
+      has:
+        field: name
+        regex: '^tests?$'
+      stopBy: end

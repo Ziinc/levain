@@ -12,7 +12,7 @@ pub struct Bundle {
     pub project: PathBuf,
     /// The host executable to ship.
     pub host: PathBuf,
-    /// The host binary's name in its project (`baguette_host`).
+    /// The host binary's name in its project (`example_host`).
     pub host_name: String,
     pub name: String,
     pub version: String,
@@ -125,10 +125,10 @@ mod tests {
         Bundle {
             project: tmp.join("project"),
             host: tmp.join("host"),
-            host_name: "baguette_host".into(),
+            host_name: "example_host".into(),
             name: "counter".into(),
             version: "0.1.0".into(),
-            identifier: "dev.baguette.counter".into(),
+            identifier: "dev.example.counter".into(),
             resources: vec![("/rel/lib/".into(), "release/lib/".into())],
             bundles: vec!["deb".into(), "appimage".into()],
             target_dir: tmp.join("target"),
@@ -146,7 +146,7 @@ mod tests {
                 "productName": "counter",
                 "mainBinaryName": "counter_app",
                 "version": "0.1.0",
-                "identifier": "dev.baguette.counter",
+                "identifier": "dev.example.counter",
                 "bundle": {
                     "active": true,
                     "targets": ["deb", "appimage"],
@@ -173,7 +173,7 @@ mod tests {
         std::fs::write(&b.host, "exe").unwrap();
         stage_host(&b).unwrap();
         let exe = std::env::consts::EXE_SUFFIX;
-        for name in ["baguette_host", "counter_app"] {
+        for name in ["example_host", "counter_app"] {
             let staged = b.target_dir.join(format!("release/{name}{exe}"));
             assert_eq!(std::fs::read(staged).unwrap(), b"exe");
         }

@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
+# Its build script passes its Tauri plugins' Android libraries on to the host
+# (`levain_build::reexport_android_libraries`).
+links = "levain"
 description = "The shared native host of the Boulangerie libraries: GPUI on Tauri, driven over a C ABI"
 
 [features]
@@ -14,6 +17,15 @@ components-gpui-kit = []
 # Serves the app's windows to Playwright clients (gpui-playwright) when
 # GPUI_PLAYWRIGHT is set. Test builds only: release builds leave it out.
 playwright = ["dep:gpui-playwright", "gpui-kit/test-support", "gpui-playwright/painted-text"]
+
+# Not used in source: it only turns on `debug-embed` for the rust-embed that
+# gpui-kit's icon catalog derives (see the dependency below), which cargo
+# machete cannot see.
+[package.metadata.cargo-machete]
+ignored = ["rust-embed"]
+
+[build-dependencies]
+levain-build = { path = "../levain-build" }
 
 [dependencies]
 async-channel = "2"
@@ -39,6 +51,11 @@ tauri = { version = "2.12", default-features = false, features = ["unstable", "w
 # Switch to a release once one is published.
 tauri-plugin-gpui = { git = "https://github.com/ziinc/tauri-gpui", features = ["mobile"] }
 
+# The app's own command line (`app.json`'s `cli`). Desktop only, as its docs
+# require: it does not build for Android or iOS.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-cli = "2"
+
 # The portal's colour scheme, read off the main thread (`portal.rs`). Both
 # are already in the tree, through rfd and async-io.
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -56,6 +73,11 @@ flate2 = "1"
 tar = "0.4"
 
 [dev-dependencies]
+# GPUI's headless test platform (`TestAppContext`, `#[gpui_kit::test]`), and
+# Tauri's mock runtime, so windows, platform calls and inputs run in tests
+# without a display.
+gpui-kit = { version = "=0.7.3", default-features = false, features = ["component", "assets", "test-support"] }
+tauri = { version = "2.12", default-features = false, features = ["test"] }
 flate2 = "1"
 tar = "0.4"
 tempfile = "3"

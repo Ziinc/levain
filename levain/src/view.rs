@@ -1,4 +1,4 @@
-//! The JSON view tree Elixir sends, and its rendering into GPUI elements.
+//! The JSON view tree the app sends, and its rendering into GPUI elements.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -19,7 +19,7 @@ use crate::bridge;
 use crate::list::{ListState, Segment};
 use crate::style::{self, Theme, Variant};
 
-/// What Elixir sends a window.
+/// What the app sends a window.
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub enum Message {
@@ -36,16 +36,19 @@ pub enum Message {
     Frame(Frame),
 }
 
-/// One render from Elixir: the theme tokens, the root node and, by list id,
+/// One render from the app: the theme tokens, the root node and, by list id,
 /// the rows of each `<list>` on screen.
 #[derive(Deserialize, Default)]
 pub struct Frame {
     #[serde(default)]
     pub theme: Theme,
+    /// Always sent (`null` for no view), so that a malformed patch or rows
+    /// message is not taken for an empty frame that blanks the window.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub root: Option<Node>,
     #[serde(default)]
     pub lists: HashMap<String, Segment>,
-    /// The view's key bindings (`keymap` in Elixir).
+    /// The view's key bindings (`keymap` in the app).
     #[serde(default)]
     pub keymap: Vec<crate::keymap::Binding>,
 }
@@ -384,7 +387,7 @@ impl Renderer<'_, '_> {
     }
 
     /// A virtualized list (GPUI's `uniform_list`) of `rows` rows, drawn as
-    /// they scroll into view from the rows Elixir sends (`list.rs`).
+    /// they scroll into view from the rows the app sends (`list.rs`).
     fn list(&mut self, attrs: &BTreeMap<String, String>, path: &str) -> AnyElement {
         let key = attrs.get("id").cloned().unwrap_or_else(|| path.to_owned());
         self.seen.insert(format!("list:{key}"));
@@ -420,7 +423,7 @@ impl Renderer<'_, '_> {
     }
 
     /// A native text input (gpui-kit's), whose state lives in the root
-    /// between frames. Typed text stands until Elixir renders a different
+    /// between frames. Typed text stands until the app renders a different
     /// `value`, as in a browser.
     fn input(&mut self, attrs: &BTreeMap<String, String>, path: &str) -> AnyElement {
         self.seen.insert(path.to_owned());
@@ -492,7 +495,7 @@ impl Renderer<'_, '_> {
     }
 
     /// A native checkbox (gpui-kit's). It shows its new state at once;
-    /// Elixir's `checked` wins whenever it changes.
+    /// The app's `checked` wins whenever it changes.
     fn checkbox(&mut self, attrs: &BTreeMap<String, String>, path: &str) -> AnyElement {
         self.seen.insert(path.to_owned());
         let checked = attrs.contains_key("checked");
@@ -531,30 +534,33 @@ impl Renderer<'_, '_> {
 /// The accessibility role of an element: its `role` attribute, or what its
 /// tag means on the web.
 fn role_of(tag: &str, attrs: &BTreeMap<String, String>) -> Option<Role> {
-    let role = attrs.get("role").map(String::as_str).unwrap_or(match tag {
-        "button" => "button",
-        "text" | "label" => "label",
-        "ul" | "ol" => "list",
-        "li" => "listitem",
-        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => "heading",
-        "a" => "link",
-        "img" => "img",
-        "nav" => "navigation",
-        "form" => "form",
-        "main" => "main",
-        "header" => "banner",
-        "footer" => "contentinfo",
-        "aside" => "complementary",
-        "section" => "region",
-        "article" => "article",
-        "p" => "paragraph",
-        "dialog" => "dialog",
-        "table" => "table",
-        "tr" => "row",
-        "td" | "th" => "cell",
-        "hr" => "separator",
-        _ => return None,
-    });
+    let role = match attrs.get("role") {
+        Some(role) => role.as_str(),
+        None => match tag {
+            "button" => "button",
+            "text" | "label" => "label",
+            "ul" | "ol" => "list",
+            "li" => "listitem",
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => "heading",
+            "a" => "link",
+            "img" => "img",
+            "nav" => "navigation",
+            "form" => "form",
+            "main" => "main",
+            "header" => "banner",
+            "footer" => "contentinfo",
+            "aside" => "complementary",
+            "section" => "region",
+            "article" => "article",
+            "p" => "paragraph",
+            "dialog" => "dialog",
+            "table" => "table",
+            "tr" => "row",
+            "td" | "th" => "cell",
+            "hr" => "separator",
+            _ => return None,
+        },
+    };
     Some(match role {
         "button" => Role::Button,
         "checkbox" => Role::CheckBox,
@@ -665,7 +671,7 @@ fn render_icon(attrs: &BTreeMap<String, String>, theme: &Theme, id: &str) -> Any
         static REPORTED: std::sync::Mutex<Option<HashSet<String>>> = std::sync::Mutex::new(None);
         let mut reported = REPORTED.lock().unwrap();
         if reported.get_or_insert_default().insert(name.to_owned()) {
-            crate::log_line(&format!("baguette: unknown icon `{name}`"));
+            crate::log_line(&format!("levain: unknown icon `{name}`"));
         }
     }
     gpui::ViewElement::new(Icon {
@@ -848,7 +854,7 @@ fn report_bounds(label: String) -> impl IntoElement {
             );
             let mut reported = REPORTED.lock().unwrap();
             if reported.get_or_insert_default().insert(label.clone(), at) != Some(at) {
-                crate::log_line(&format!("baguette: bounds {label} {} {}", at.0, at.1));
+                crate::log_line(&format!("levain: bounds {label} {} {}", at.0, at.1));
             }
         },
         |_, _, _, _| {},
@@ -876,10 +882,10 @@ pub fn text_of(nodes: &[Node]) -> String {
 /// A text input's state between frames.
 struct InputSlot {
     state: Entity<InputState>,
-    /// The `value` Elixir last rendered.
+    /// The `value` the app last rendered.
     rendered: String,
     placeholder: String,
-    /// Set when Baguette changed the text, so that change is not sent back.
+    /// Set when the host changed the text, so that change is not sent back.
     echo: bool,
     name: Option<String>,
     change: Option<String>,
@@ -891,7 +897,7 @@ struct InputSlot {
 #[derive(Default)]
 struct CheckSlot {
     checked: bool,
-    /// The `checked` Elixir last rendered.
+    /// The `checked` the app last rendered.
     rendered: bool,
     name: Option<String>,
     click: Option<String>,
@@ -905,7 +911,7 @@ struct FormInfo {
     submit: Option<String>,
 }
 
-/// The root view of a Baguette window: whatever Elixir last rendered, and
+/// The root view of a levain window: whatever the app last rendered, and
 /// the state of the native inputs in it.
 pub struct Root {
     pub window: u32,
@@ -985,7 +991,7 @@ impl Root {
     }
 
     /// Applies a patch to the frame shown. One that doesn't fit leaves it
-    /// part patched and asks Elixir for the whole frame; the patches before
+    /// part patched and asks the app for the whole frame; the patches before
     /// that frame arrives were diffed against another tree, and are dropped.
     pub fn patch(
         &mut self,
@@ -993,16 +999,23 @@ impl Root {
         lists: HashMap<String, Segment>,
         cx: &mut gpui::Context<Self>,
     ) {
+        if self.apply_patch(ops, lists) {
+            cx.notify();
+        }
+    }
+
+    /// `patch` without the repaint; false when it was dropped.
+    fn apply_patch(&mut self, ops: Vec<crate::patch::Op>, lists: HashMap<String, Segment>) -> bool {
         if self.desynced {
-            return;
+            return false;
         }
         if let Err(error) = crate::patch::apply(&mut self.frame.root, ops) {
-            crate::log_line(&format!("baguette: patch failed ({error}); resyncing"));
+            crate::log_line(&format!("levain: patch failed ({error}); resyncing"));
             bridge::emit(&crate::events::resync(self.window));
             self.desynced = true;
         }
         self.reset_lists(lists);
-        cx.notify();
+        true
     }
 
     fn reset_lists(&mut self, mut lists: HashMap<String, Segment>) {
@@ -1011,7 +1024,7 @@ impl Root {
         }
     }
 
-    /// Rows Elixir sent for one of the window's lists.
+    /// Rows the app sent for one of the window's lists.
     pub fn rows(&mut self, segment: Segment, cx: &mut gpui::Context<Self>) {
         if let Some(list) = self.lists.get_mut(&segment.id) {
             list.insert(segment);
@@ -1020,7 +1033,7 @@ impl Root {
     }
 
     /// The rows of list `key` in `range`, as `uniform_list` draws them. Rows
-    /// not here yet are blank until Elixir sends them, which this asks for.
+    /// not here yet are blank until the app sends them, which this asks for.
     fn list_rows(
         &mut self,
         key: &str,
@@ -1156,6 +1169,12 @@ impl Root {
                 values.insert(name.clone(), Value::String(text));
             }
         }
+        self.add_checked(form, &mut values);
+        values
+    }
+
+    /// "on" for each checked, named checkbox in `form`.
+    fn add_checked(&self, form: &str, values: &mut Map<String, Value>) {
         for slot in self.checks.values() {
             if let (Some(name), Some(f), true) = (&slot.name, &slot.form, slot.checked)
                 && f == form
@@ -1163,7 +1182,6 @@ impl Root {
                 values.insert(name.clone(), Value::String("on".into()));
             }
         }
-        values
     }
 
     fn submit(&self, form: &str, cx: &gpui::App) {
@@ -1369,7 +1387,7 @@ impl gpui::Render for Root {
             .id("body")
             .size_full()
             .key_context(crate::keymap::window_context(window_id).as_str())
-            .on_action(move |action: &crate::keymap::ElixirAction, _, _| {
+            .on_action(move |action: &crate::keymap::RuntimeAction, _, _| {
                 bridge::emit(&crate::events::action(window_id, action.name.as_ref()));
             })
             .children(content);
@@ -1435,5 +1453,560 @@ mod tests {
         // none on a phone.
         let icon = gpui_kit::assets::AllAssets::get("icons/save.svg").expect("save icon");
         assert!(matches!(icon.data, std::borrow::Cow::Borrowed(_)));
+    }
+
+    fn el(tag: &str, attrs: &[(&str, &str)], children: Vec<Node>) -> Node {
+        Node::Element {
+            tag: tag.into(),
+            attrs: attrs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            children,
+        }
+    }
+
+    fn attrs(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    pub(super) fn ops(json: &str) -> Vec<crate::patch::Op> {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn nodes_read_the_short_keys() {
+        let node: Node = serde_json::from_str(
+            r#"{"t": "div", "a": {"class": "p-2"}, "c": ["hi", {"t": "span"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            node,
+            el(
+                "div",
+                &[("class", "p-2")],
+                vec![Node::Text("hi".into()), el("span", &[], vec![])]
+            )
+        );
+    }
+
+    #[test]
+    fn nodes_need_a_tag_and_string_attributes() {
+        assert_eq!(
+            serde_json::from_str::<Node>(r#""plain""#).unwrap(),
+            Node::Text("plain".into())
+        );
+        // The long names are not the wire format.
+        assert!(serde_json::from_str::<Node>(r#"{"tag": "div"}"#).is_err());
+        assert!(serde_json::from_str::<Node>(r#"{"a": {"x": "1"}}"#).is_err());
+        // Attribute values are strings, as the app stringifies them.
+        assert!(serde_json::from_str::<Node>(r#"{"t": "div", "a": {"rows": 3}}"#).is_err());
+        assert!(serde_json::from_str::<Node>("42").is_err());
+    }
+
+    #[test]
+    fn frames_default_what_they_omit() {
+        let Ok(Message::Frame(frame)) = serde_json::from_str(r#"{"root": "x"}"#) else {
+            panic!("not a frame");
+        };
+        assert_eq!(frame.root, Some(Node::Text("x".into())));
+        assert!(frame.theme.is_empty() && frame.lists.is_empty() && frame.keymap.is_empty());
+
+        let Ok(Message::Frame(frame)) =
+            serde_json::from_str(r##"{"theme": {"primary": "#2563eb"}, "root": null}"##)
+        else {
+            panic!("not a frame");
+        };
+        assert_eq!(frame.root, None);
+        assert_eq!(frame.theme["primary"], "#2563eb");
+    }
+
+    #[test]
+    fn keymap_bindings_may_omit_their_context() {
+        let Ok(Message::Frame(frame)) = serde_json::from_str(
+            r#"{"root": null, "keymap": [{"keys": "escape", "action": "close"}]}"#,
+        ) else {
+            panic!("not a frame");
+        };
+        assert_eq!(frame.keymap[0].context, None);
+        assert_eq!(frame.keymap[0].action, "close");
+    }
+
+    #[test]
+    fn patches_carry_their_lists_and_default_to_none() {
+        let Ok(Message::Patch { patch, lists }) = serde_json::from_str(
+            r#"{"patch": [{"op": "attrs", "at": [], "a": {"x": "1"}}],
+                "lists": {"jobs": {"start": 2, "rows": ["r"]}}}"#,
+        ) else {
+            panic!("not a patch");
+        };
+        assert_eq!(patch.len(), 1);
+        assert_eq!(lists["jobs"].start, 2);
+        let Ok(Message::Patch { lists, .. }) = serde_json::from_str(r#"{"patch": []}"#) else {
+            panic!("not a patch");
+        };
+        assert!(lists.is_empty());
+    }
+
+    #[test]
+    // A message that is none of the three must not blank the window: it is
+    // reported as invalid (`windows::deliver` shows a notice).
+    fn malformed_messages_are_errors_not_empty_frames() {
+        for json in [
+            r#"{"patch": [{"op": "nope", "at": []}]}"#,
+            r#"{"rows": {"id": "a"}}"#,
+            r#"[]"#,
+            r#""text""#,
+            "not json",
+        ] {
+            assert!(serde_json::from_str::<Message>(json).is_err(), "{json}");
+        }
+    }
+
+    #[test]
+    fn values_come_from_phx_value_attributes() {
+        let attrs = attrs(&[
+            ("phx-click", "go"),
+            ("phx-value-id", "7"),
+            ("phx-value-kind", "a-b"),
+            ("value", "not this"),
+            ("phx-values", "nor this"),
+        ]);
+        assert_eq!(
+            values_of(&attrs),
+            self::attrs(&[("id", "7"), ("kind", "a-b")])
+        );
+        assert!(values_of(&BTreeMap::new()).is_empty());
+    }
+
+    #[test]
+    fn text_is_gathered_depth_first_and_space_joined() {
+        let nodes = [
+            Node::Text("a".into()),
+            el(
+                "b",
+                &[],
+                vec![
+                    Node::Text("b".into()),
+                    el("i", &[], vec![Node::Text("c".into())]),
+                ],
+            ),
+        ];
+        assert_eq!(text_of(&nodes), "a b c");
+        assert_eq!(text_of(&[]), "");
+    }
+
+    #[test]
+    fn roles_follow_the_tag_unless_given() {
+        assert_eq!(role_of("button", &attrs(&[])), Some(Role::Button));
+        assert_eq!(role_of("h3", &attrs(&[])), Some(Role::Heading));
+        assert_eq!(role_of("a", &attrs(&[])), Some(Role::Link));
+        assert_eq!(role_of("header", &attrs(&[])), Some(Role::Banner));
+        assert_eq!(role_of("div", &attrs(&[])), None);
+        assert_eq!(
+            role_of("div", &attrs(&[("role", "checkbox")])),
+            Some(Role::CheckBox)
+        );
+        // An explicit role wins over the tag's.
+        assert_eq!(
+            role_of("button", &attrs(&[("role", "tab")])),
+            Some(Role::Tab)
+        );
+        assert_eq!(
+            role_of("div", &attrs(&[("role", "image")])),
+            Some(Role::Image)
+        );
+        // A role GPUI has no name for gives none, even on a button.
+        assert_eq!(role_of("button", &attrs(&[("role", "bogus")])), None);
+    }
+
+    #[test]
+    fn durations_default_to_a_second() {
+        let ms = |a: &[(&str, &str)]| duration_of(&attrs(a)).as_millis();
+        assert_eq!(ms(&[]), 1000);
+        assert_eq!(ms(&[("duration", "250")]), 250);
+        assert_eq!(ms(&[("duration", "slow")]), 1000);
+        assert_eq!(ms(&[("duration", "-5")]), 1000);
+    }
+
+    #[test]
+    fn function_keys_and_modifiers() {
+        assert_eq!(key_name("f12").as_deref(), Some("F12"));
+        // Not function keys: letters, or numbers that aren't a key.
+        assert_eq!(key_name("f").as_deref(), Some("f"));
+        assert_eq!(key_name("foo").as_deref(), Some("foo"));
+        assert_eq!(key_name("f999").as_deref(), Some("f999"));
+        for modifier in ["control", "alt", "platform", "function", ""] {
+            assert_eq!(key_name(modifier), None, "{modifier}");
+        }
+        for (gpui_key, browser_key) in [
+            ("escape", "Escape"),
+            ("backspace", "Backspace"),
+            ("delete", "Delete"),
+            ("tab", "Tab"),
+            ("down", "ArrowDown"),
+            ("left", "ArrowLeft"),
+            ("right", "ArrowRight"),
+            ("home", "Home"),
+            ("end", "End"),
+            ("pageup", "PageUp"),
+            ("pagedown", "PageDown"),
+            ("insert", "Insert"),
+        ] {
+            assert_eq!(key_name(gpui_key).as_deref(), Some(browser_key));
+        }
+    }
+
+    fn root() -> Root {
+        Root::new(
+            3,
+            Frame {
+                root: Some(el(
+                    "div",
+                    &[],
+                    vec![Node::Text("a".into()), Node::Text("b".into())],
+                )),
+                ..Frame::default()
+            },
+        )
+    }
+
+    #[test]
+    fn a_patch_that_fits_changes_the_frame_and_sends_nothing() {
+        let h = crate::bridge::testing::harness();
+        let mut root = root();
+        let patch = ops(r#"[{"op": "replace", "at": [1], "node": "B"},
+                {"op": "attrs", "at": [], "a": {"class": "x"}}]"#);
+        assert!(root.apply_patch(patch, HashMap::new()));
+        assert_eq!(
+            root.frame.root,
+            Some(el(
+                "div",
+                &[("class", "x")],
+                vec![Node::Text("a".into()), Node::Text("B".into())]
+            ))
+        );
+        assert!(!root.desynced);
+        assert!(h.events().is_empty());
+    }
+
+    #[test]
+    fn a_patch_that_does_not_fit_asks_for_the_whole_frame_once() {
+        let h = crate::bridge::testing::harness();
+        let mut root = root();
+        let bad = ops(r#"[{"op": "replace", "at": [0], "node": "A"},
+                {"op": "replace", "at": [9], "node": "?"}]"#);
+        assert!(root.apply_patch(bad, HashMap::new()));
+        assert!(root.desynced);
+        assert_eq!(
+            h.events(),
+            [serde_json::json!({"type": "resync", "window": 3})]
+        );
+        // The tree is left part patched.
+        let Some(Node::Element { children, .. }) = &root.frame.root else {
+            panic!("no root");
+        };
+        assert_eq!(children[0], Node::Text("A".into()));
+
+        // Until the frame arrives, patches (made against the lost tree) are
+        // dropped, and the app is not asked again.
+        let before = root.frame.root.clone();
+        let next = ops(r#"[{"op": "replace", "at": [1], "node": "late"}]"#);
+        assert!(!root.apply_patch(next, HashMap::new()));
+        assert_eq!(root.frame.root, before);
+        assert!(h.events().is_empty());
+    }
+
+    #[test]
+    fn patches_replace_every_lists_rows() {
+        let _h = crate::bridge::testing::harness();
+        let mut root = root();
+        let segment = |start: usize, rows: &[&str]| Segment {
+            id: String::new(),
+            start,
+            rows: rows.iter().map(|r| Node::Text(r.to_string())).collect(),
+        };
+        for key in ["jobs", "logs"] {
+            let mut list = ListState::default();
+            list.count = 10;
+            list.insert(segment(0, &["old", "old"]));
+            root.lists.insert(key.into(), list);
+        }
+        let lists = HashMap::from([("jobs".to_string(), segment(5, &["new"]))]);
+        assert!(root.apply_patch(Vec::new(), lists));
+        // `jobs` has the rows the patch brought, and none of its old ones;
+        // `logs` got none, so it is emptied to be asked for again.
+        let jobs = &root.lists["jobs"];
+        assert_eq!(jobs.rows.keys().copied().collect::<Vec<_>>(), [5]);
+        assert!(root.lists["logs"].rows.is_empty());
+    }
+
+    #[test]
+    fn forms_collect_their_checked_boxes() {
+        let mut root = root();
+        let slot = |name: Option<&str>, form: Option<&str>, checked: bool| CheckSlot {
+            checked,
+            name: name.map(Into::into),
+            form: form.map(Into::into),
+            ..CheckSlot::default()
+        };
+        root.checks
+            .insert("a".into(), slot(Some("agree"), Some("root.0"), true));
+        root.checks
+            .insert("b".into(), slot(Some("news"), Some("root.0"), false));
+        root.checks
+            .insert("c".into(), slot(Some("other"), Some("root.1"), true));
+        root.checks
+            .insert("d".into(), slot(None, Some("root.0"), true));
+        root.checks
+            .insert("e".into(), slot(Some("loose"), None, true));
+        let mut values = Map::new();
+        values.insert("name".into(), Value::String("Ada".into()));
+        root.add_checked("root.0", &mut values);
+        // Browsers send "on" for checked boxes only; the rest is unchanged.
+        assert_eq!(
+            Value::Object(values),
+            serde_json::json!({"name": "Ada", "agree": "on"})
+        );
+    }
+
+    fn keystroke(keys: &str, action: Option<&str>, context: &[&str]) -> gpui::KeystrokeEvent {
+        gpui::KeystrokeEvent {
+            keystroke: gpui::Keystroke::parse(keys).unwrap(),
+            input_preference: gpui::InputPreference::KeyBindings,
+            action: action.map(|name| {
+                Box::new(crate::keymap::RuntimeAction {
+                    name: name.to_string().into(),
+                }) as Box<dyn gpui::Action>
+            }),
+            context_stack: context
+                .iter()
+                .map(|c| gpui::KeyContext::parse(c).unwrap())
+                .collect(),
+        }
+    }
+
+    fn shortcut(event: &str, key: Option<&str>, values: &[(&str, &str)]) -> WindowKey {
+        WindowKey {
+            event: event.into(),
+            key: key.map(Into::into),
+            values: attrs(values),
+        }
+    }
+
+    #[test]
+    fn window_shortcuts_send_the_key_and_its_modifiers() {
+        let h = crate::bridge::testing::harness();
+        let mut root = root();
+        root.keydowns = vec![
+            shortcut("any", None, &[("tool", "x")]),
+            shortcut("only_enter", Some("enter"), &[]),
+            shortcut("only_k", Some("K"), &[]),
+        ];
+        root.on_keystroke(&keystroke("shift-k", None, &[]));
+        let events = h.events();
+        // `phx-key` matches whatever the case, and others are skipped.
+        let names: Vec<_> = events
+            .iter()
+            .map(|e| e["event"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["any", "only_k"]);
+        assert_eq!(
+            events[0],
+            serde_json::json!({
+                "type": "keydown",
+                "window": 3,
+                "event": "any",
+                "values": {
+                    "tool": "x", "key": "k",
+                    "ctrl": false, "shift": true, "alt": false, "meta": false,
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn keystrokes_something_handled_or_typed_send_nothing() {
+        let h = crate::bridge::testing::harness();
+        let mut root = root();
+        root.keydowns = vec![shortcut("any", None, &[])];
+        // Already dispatched to an action.
+        root.on_keystroke(&keystroke("ctrl-z", Some("undo"), &[]));
+        // A lone modifier has no key name.
+        root.on_keystroke(&keystroke("shift", None, &[]));
+        // Typing in an input: plain keys and Alt/Shift chords are the text's.
+        root.on_keystroke(&keystroke("a", None, &["Input"]));
+        root.on_keystroke(&keystroke("alt-a", None, &["Input"]));
+        assert!(h.events().is_empty());
+        // Ctrl or Meta chords still fire in an input.
+        root.on_keystroke(&keystroke("ctrl-s", None, &["Input"]));
+        root.on_keystroke(&keystroke("cmd-s", None, &["Workspace", "Input"]));
+        let events = h.events();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["values"]["ctrl"], true);
+        assert_eq!(events[1]["values"]["meta"], true);
+        // Other contexts are not inputs.
+        root.on_keystroke(&keystroke("a", None, &["Editor"]));
+        assert_eq!(h.events().len(), 1);
+    }
+
+    #[test]
+    fn notices_show_their_text() {
+        let frame = crate::notice("oops".into());
+        assert_eq!(
+            text_of(std::slice::from_ref(frame.root.as_ref().unwrap())),
+            "oops"
+        );
+    }
+}
+
+/// The view in a headless window: drawing, clicks, typing, lists, forms.
+#[cfg(test)]
+#[path = "view_tests.rs"]
+mod window_tests;
+
+/// Builds the events in `fixtures/events.json` from the inputs the view's own
+/// code takes (attributes, keystrokes, checkbox slots, list state).
+#[cfg(test)]
+pub(crate) mod fixture {
+    use super::*;
+    use crate::bridge::testing::Harness;
+
+    fn attrs_of(a: &Value) -> BTreeMap<String, String> {
+        a["attrs"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
+            .collect()
+    }
+
+    fn window(a: &Value) -> u32 {
+        a["window"].as_u64().unwrap_or(0) as u32
+    }
+
+    fn root(window: u32) -> Root {
+        Root::new(window, Frame::default())
+    }
+
+    /// The text fields in `a["texts"]`, then the checkboxes in `a["checks"]`
+    /// collected as `form_values` does.
+    fn form_values(root: &mut Root, a: &Value) -> Map<String, Value> {
+        let form = a["form"].as_str().unwrap();
+        let mut values = a["texts"].as_object().unwrap().clone();
+        for (i, c) in a["checks"].as_array().unwrap().iter().enumerate() {
+            root.checks.insert(
+                i.to_string(),
+                CheckSlot {
+                    checked: c["checked"].as_bool().unwrap(),
+                    name: c["name"].as_str().map(Into::into),
+                    form: Some(form.to_owned()),
+                    ..CheckSlot::default()
+                },
+            );
+        }
+        root.add_checked(form, &mut values);
+        values
+    }
+
+    pub(crate) fn event(h: &Harness, name: &str, a: &Value) -> Option<Value> {
+        let w = window(a);
+        Some(match name {
+            "click" => {
+                let attrs = attrs_of(a);
+                crate::events::input("click", w, &attrs["phx-click"], values_of(&attrs))
+            }
+            // A checkbox's click: its `phx-value-*` and `checked`.
+            "check_click" => {
+                let attrs = attrs_of(a);
+                let mut values: Map<String, Value> = values_of(&attrs)
+                    .into_iter()
+                    .map(|(k, v)| (k, Value::String(v)))
+                    .collect();
+                values.insert("checked".into(), a["checked"].clone());
+                crate::events::input("click", w, &attrs["phx-click"], values)
+            }
+            "drag" => {
+                let attrs = attrs_of(a);
+                crate::events::drag(
+                    w,
+                    &attrs["phx-drag"],
+                    values_of(&attrs),
+                    a["dx"].as_f64().unwrap() as f32,
+                    a["dy"].as_f64().unwrap() as f32,
+                )
+            }
+            "keydown" => {
+                let mut root = root(w);
+                root.keydowns = a["bindings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|b| WindowKey {
+                        event: b["event"].as_str().unwrap().into(),
+                        key: b["key"].as_str().map(Into::into),
+                        values: b["values"]
+                            .as_object()
+                            .map(|v| {
+                                v.iter()
+                                    .map(|(k, v)| (k.clone(), v.as_str().unwrap().into()))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                    })
+                    .collect();
+                let keystroke = gpui::Keystroke::parse(a["keys"].as_str().unwrap()).unwrap();
+                root.on_keystroke(&gpui::KeystrokeEvent {
+                    keystroke,
+                    input_preference: gpui::InputPreference::KeyBindings,
+                    action: None,
+                    context_stack: Vec::new(),
+                });
+                let mut events = h.events();
+                assert_eq!(events.len(), 1, "{a}");
+                events.remove(0)
+            }
+            // A form's `change`: its fields, `_target`.
+            "form_change" => {
+                let mut root = root(w);
+                let mut values = form_values(&mut root, a);
+                values.insert("_target".into(), a["target"].clone());
+                crate::events::input("change", w, a["event"].as_str().unwrap(), values)
+            }
+            "form_submit" => {
+                let mut root = root(w);
+                let values = form_values(&mut root, a);
+                crate::events::input("submit", w, a["event"].as_str().unwrap(), values)
+            }
+            // A list asking for rows: `have` is the range already here.
+            "rows" => {
+                let n = |v: &Value| v.as_u64().unwrap() as usize;
+                let mut list = ListState::default();
+                list.count = n(&a["count"]);
+                let have = (n(&a["have"][0]), n(&a["have"][1]));
+                if have.0 < have.1 {
+                    list.insert(Segment {
+                        id: a["id"].as_str().unwrap().into(),
+                        start: have.0,
+                        rows: (have.0..have.1).map(|_| Node::Text("x".into())).collect(),
+                    });
+                }
+                let want = list
+                    .wanted(n(&a["visible"][0])..n(&a["visible"][1]))
+                    .unwrap();
+                crate::events::rows(
+                    w,
+                    a["event"].as_str().unwrap(),
+                    a["id"].as_str().unwrap(),
+                    want.rows.start,
+                    want.rows.end,
+                    [want.visible.start, want.visible.end],
+                )
+            }
+            _ => return None,
+        })
     }
 }

@@ -1,0 +1,16 @@
+{
+  "window": {"title": "Echo", "width": 320, "height": 200},
+  "cli": {
+    "description": "A counter, which can also add numbers without a window",
+    "subcommands": {
+      "sum": {
+        "description": "Prints the sum of two numbers and exits",
+        "args": [
+          {"name": "a", "index": 1, "takesValue": true, "required": true},
+          {"name": "b", "index": 2, "takesValue": true, "required": true},
+          {"name": "json", "description": "Print {\"sum\": n} instead of n"}
+        ]
+      }
+    }
+  }
+}

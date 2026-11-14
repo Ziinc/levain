@@ -4,7 +4,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
+homepage.workspace = true
+description = "Packages apps around a levain host: precompiled assets, desktop bundles, Android and iOS projects"
 
 [[bin]]
 name = "levain-pack"

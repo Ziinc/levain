@@ -1,0 +1,11 @@
+[package]
+name = "levain-build"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Build-script helpers for hosts built on levain"
+
+[dependencies]
+tauri-build = "2"

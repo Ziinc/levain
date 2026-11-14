@@ -27,16 +27,21 @@ pub fn watch(cx: &mut gpui::App) {
     let (tx, rx) = async_channel::unbounded::<WindowAppearance>();
     #[cfg(target_os = "linux")]
     let _ = std::thread::Builder::new()
-        .name("baguette-portal".into())
+        .name("levain-portal".into())
         .spawn(move || {
             if let Err(error) = futures_lite::future::block_on(follow(tx)) {
                 crate::log_line(&format!(
-                    "baguette: no colour scheme from the portal: {error}"
+                    "levain: no colour scheme from the portal: {error}"
                 ));
             }
         });
     #[cfg(not(target_os = "linux"))]
     drop(tx);
+    listen(rx, cx);
+}
+
+/// Applies the colour schemes that arrive on `rx`, on the UI thread.
+fn listen(rx: async_channel::Receiver<WindowAppearance>, cx: &mut gpui::App) {
     cx.spawn(async move |cx| {
         while let Ok(appearance) = rx.recv().await {
             cx.update(|cx| {
@@ -93,5 +98,39 @@ mod tests {
         assert_eq!(scheme(ColorScheme::PreferDark), WindowAppearance::Dark);
         assert_eq!(scheme(ColorScheme::PreferLight), WindowAppearance::Light);
         assert_eq!(scheme(ColorScheme::NoPreference), WindowAppearance::Light);
+    }
+}
+
+#[cfg(test)]
+mod listen_tests {
+    use super::*;
+
+    #[gpui_kit::test]
+    fn a_colour_scheme_wins_over_gpuis_and_is_told_to_windows_once(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        let h = crate::bridge::testing::harness();
+        crate::testing::window(cx, 0);
+        h.events();
+        assert_eq!(cx.update(|cx| appearance(cx)), WindowAppearance::Light);
+        let (tx, rx) = async_channel::unbounded();
+        cx.update(|cx| listen(rx, cx));
+        let told = |cx: &mut gpui_kit::TestAppContext, scheme: WindowAppearance| {
+            tx.try_send(scheme).unwrap();
+            cx.run_until_parked();
+            h.events()
+        };
+        assert_eq!(
+            told(cx, WindowAppearance::Dark),
+            [serde_json::json!({"type": "appearance", "window": 0, "appearance": "dark"})]
+        );
+        assert_eq!(cx.update(|cx| appearance(cx)), WindowAppearance::Dark);
+        // The same scheme again is no change.
+        assert!(told(cx, WindowAppearance::Dark).is_empty());
+        assert_eq!(
+            told(cx, WindowAppearance::Light),
+            [serde_json::json!({"type": "appearance", "window": 0, "appearance": "light"})]
+        );
+        assert_eq!(cx.update(|cx| appearance(cx)), WindowAppearance::Light);
     }
 }

@@ -1,0 +1,19 @@
+id: no-println-rust
+valid:
+  - |
+    fn logs(line: &str) {
+      crate::log_line(line);
+    }
+  - |
+    #[cfg(test)]
+    mod tests {
+      #[test]
+      fn prints_while_debugging() {
+        println!("state");
+      }
+    }
+invalid:
+  - |
+    fn logs(line: &str) {
+      println!("{line}");
+    }

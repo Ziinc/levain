@@ -5,8 +5,8 @@
 pub fn start(cx: &mut tauri_plugin_gpui::gpui::App) {
     if let Some(server) = gpui_playwright::Server::from_env() {
         match server.start(cx) {
-            Ok(endpoint) => crate::log_line(&format!("baguette: playwright on {endpoint}")),
-            Err(error) => crate::log_line(&format!("baguette: playwright failed: {error}")),
+            Ok(endpoint) => crate::log_line(&format!("levain: playwright on {endpoint}")),
+            Err(error) => crate::log_line(&format!("levain: playwright failed: {error}")),
         }
     }
 }

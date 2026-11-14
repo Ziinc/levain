@@ -266,9 +266,9 @@ mod tests {
 
     #[test]
     fn signed_gradle_reads_the_key_from_the_environment() {
-        let out = patch_gradle(GRADLE, Some("BAGUETTE_ANDROID")).unwrap();
-        assert!(out.contains(r#"storeFile = file(System.getenv("BAGUETTE_ANDROID_KEYSTORE"))"#));
-        assert!(out.contains(r#"keyAlias = System.getenv("BAGUETTE_ANDROID_KEY_ALIAS")"#));
+        let out = patch_gradle(GRADLE, Some("EXAMPLE_ANDROID")).unwrap();
+        assert!(out.contains(r#"storeFile = file(System.getenv("EXAMPLE_ANDROID_KEYSTORE"))"#));
+        assert!(out.contains(r#"keyAlias = System.getenv("EXAMPLE_ANDROID_KEY_ALIAS")"#));
         assert!(out.contains(
             "getByName(\"release\") {\n            signingConfig = signingConfigs.getByName(\"release\")\n            isMinifyEnabled"
         ));
