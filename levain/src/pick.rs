@@ -196,3 +196,28 @@ mod tests {
         assert_eq!(h.events()[0]["values"], json!({"path": "/new"}));
     }
 }
+
+/// Builds `pick` events for `fixtures/events.json` through [`Pick::send`].
+#[cfg(test)]
+pub(crate) mod fixture {
+    use super::*;
+    use crate::bridge::testing::Harness;
+    use serde_json::Value;
+
+    pub(crate) fn event(h: &Harness, name: &str, a: &Value) -> Option<Value> {
+        if name != "pick" {
+            return None;
+        }
+        let attrs: BTreeMap<String, String> = a["attrs"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
+            .collect();
+        let pick = Pick::from_attrs(a["window"].as_u64().unwrap() as u32, &attrs).unwrap();
+        pick.send(a["path"].as_str().unwrap().into());
+        let mut events = h.events();
+        assert_eq!(events.len(), 1);
+        Some(events.remove(0))
+    }
+}

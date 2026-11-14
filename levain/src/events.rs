@@ -61,7 +61,13 @@ pub fn reply_error(reference: Value, error: String) -> Value {
 mod tests {
     use super::*;
 
-    fn build(name: &str, a: &Value) -> Value {
+    fn build(h: &crate::bridge::testing::Harness, name: &str, a: &Value) -> Value {
+        if let Some(built) = crate::view::fixture::event(h, name, a)
+            .or_else(|| crate::pick::fixture::event(h, name, a))
+            .or_else(|| crate::platform::fixture::event(name, a))
+        {
+            return built;
+        }
         let s = |k: &str| a[k].as_str().unwrap();
         let w = || a["window"].as_u64().unwrap() as u32;
         let values = || a["values"].as_object().unwrap().clone();
@@ -98,11 +104,18 @@ mod tests {
 
     #[test]
     fn conformance_fixture() {
+        let h = crate::bridge::testing::harness();
         let cases: Vec<Value> =
             serde_json::from_str(include_str!("../../fixtures/events.json")).unwrap();
         let mut types = std::collections::BTreeSet::new();
+        let mut names = std::collections::BTreeSet::new();
         for case in &cases {
-            let built = build(case["build"].as_str().unwrap(), &case["args"]);
+            assert!(
+                names.insert(case["name"].as_str().unwrap()),
+                "{}",
+                case["name"]
+            );
+            let built = build(&h, case["build"].as_str().unwrap(), &case["args"]);
             assert_eq!(built, case["json"], "{}", case["name"]);
             types.insert(built["type"].as_str().unwrap().to_owned());
         }

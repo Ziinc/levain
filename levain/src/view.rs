@@ -1852,3 +1852,146 @@ mod tests {
         );
     }
 }
+
+/// Builds the events in `fixtures/events.json` from the inputs the view's own
+/// code takes (attributes, keystrokes, checkbox slots, list state).
+#[cfg(test)]
+pub(crate) mod fixture {
+    use super::*;
+    use crate::bridge::testing::Harness;
+
+    fn attrs_of(a: &Value) -> BTreeMap<String, String> {
+        a["attrs"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
+            .collect()
+    }
+
+    fn window(a: &Value) -> u32 {
+        a["window"].as_u64().unwrap_or(0) as u32
+    }
+
+    fn root(window: u32) -> Root {
+        Root::new(window, Frame::default())
+    }
+
+    /// The text fields in `a["texts"]`, then the checkboxes in `a["checks"]`
+    /// collected as `form_values` does.
+    fn form_values(root: &mut Root, a: &Value) -> Map<String, Value> {
+        let form = a["form"].as_str().unwrap();
+        let mut values = a["texts"].as_object().unwrap().clone();
+        for (i, c) in a["checks"].as_array().unwrap().iter().enumerate() {
+            root.checks.insert(
+                i.to_string(),
+                CheckSlot {
+                    checked: c["checked"].as_bool().unwrap(),
+                    name: c["name"].as_str().map(Into::into),
+                    form: Some(form.to_owned()),
+                    ..CheckSlot::default()
+                },
+            );
+        }
+        root.add_checked(form, &mut values);
+        values
+    }
+
+    pub(crate) fn event(h: &Harness, name: &str, a: &Value) -> Option<Value> {
+        let w = window(a);
+        Some(match name {
+            "click" => {
+                let attrs = attrs_of(a);
+                crate::events::input("click", w, &attrs["phx-click"], values_of(&attrs))
+            }
+            // A checkbox's click: its `phx-value-*` and `checked`.
+            "check_click" => {
+                let attrs = attrs_of(a);
+                let mut values: Map<String, Value> = values_of(&attrs)
+                    .into_iter()
+                    .map(|(k, v)| (k, Value::String(v)))
+                    .collect();
+                values.insert("checked".into(), a["checked"].clone());
+                crate::events::input("click", w, &attrs["phx-click"], values)
+            }
+            "drag" => {
+                let attrs = attrs_of(a);
+                crate::events::drag(
+                    w,
+                    &attrs["phx-drag"],
+                    values_of(&attrs),
+                    a["dx"].as_f64().unwrap() as f32,
+                    a["dy"].as_f64().unwrap() as f32,
+                )
+            }
+            "keydown" => {
+                let mut root = root(w);
+                root.keydowns = a["bindings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|b| WindowKey {
+                        event: b["event"].as_str().unwrap().into(),
+                        key: b["key"].as_str().map(Into::into),
+                        values: b["values"]
+                            .as_object()
+                            .map(|v| {
+                                v.iter()
+                                    .map(|(k, v)| (k.clone(), v.as_str().unwrap().into()))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                    })
+                    .collect();
+                let keystroke = gpui::Keystroke::parse(a["keys"].as_str().unwrap()).unwrap();
+                root.on_keystroke(&gpui::KeystrokeEvent {
+                    keystroke,
+                    input_preference: gpui::InputPreference::KeyBindings,
+                    action: None,
+                    context_stack: Vec::new(),
+                });
+                let mut events = h.events();
+                assert_eq!(events.len(), 1, "{a}");
+                events.remove(0)
+            }
+            // A form's `change`: its fields, `_target`.
+            "form_change" => {
+                let mut root = root(w);
+                let mut values = form_values(&mut root, a);
+                values.insert("_target".into(), a["target"].clone());
+                crate::events::input("change", w, a["event"].as_str().unwrap(), values)
+            }
+            "form_submit" => {
+                let mut root = root(w);
+                let values = form_values(&mut root, a);
+                crate::events::input("submit", w, a["event"].as_str().unwrap(), values)
+            }
+            // A list asking for rows: `have` is the range already here.
+            "rows" => {
+                let n = |v: &Value| v.as_u64().unwrap() as usize;
+                let mut list = ListState::default();
+                list.count = n(&a["count"]);
+                let have = (n(&a["have"][0]), n(&a["have"][1]));
+                if have.0 < have.1 {
+                    list.insert(Segment {
+                        id: a["id"].as_str().unwrap().into(),
+                        start: have.0,
+                        rows: (have.0..have.1).map(|_| Node::Text("x".into())).collect(),
+                    });
+                }
+                let want = list
+                    .wanted(n(&a["visible"][0])..n(&a["visible"][1]))
+                    .unwrap();
+                crate::events::rows(
+                    w,
+                    a["event"].as_str().unwrap(),
+                    a["id"].as_str().unwrap(),
+                    want.rows.start,
+                    want.rows.end,
+                    [want.visible.start, want.visible.end],
+                )
+            }
+            _ => return None,
+        })
+    }
+}

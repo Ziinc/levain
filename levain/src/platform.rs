@@ -392,3 +392,149 @@ mod tests {
         assert_eq!(accelerator("secondary-shift--"), "CmdOrCtrl+Shift+-");
     }
 }
+
+/// Builds `reply` events for `fixtures/events.json` through the request
+/// parser and [`reply_for`].
+#[cfg(test)]
+pub(crate) mod fixture {
+    // Also the tests of `fixtures/calls.json`, the requests.
+    use super::*;
+
+    pub(crate) fn event(name: &str, a: &Value) -> Option<Value> {
+        Some(match name {
+            // A request that ran: `ok` is its result, `err` its error.
+            "reply_for" => {
+                let request = Request {
+                    call: a["call"].as_str().unwrap().into(),
+                    reference: a["ref"].as_u64().unwrap(),
+                    args: Value::Null,
+                };
+                let outcome = match a.get("err") {
+                    Some(err) => Err(err.as_str().unwrap().to_owned()),
+                    None => Ok(a["ok"].clone()),
+                };
+                reply_for(&request, outcome)
+            }
+            // Text that isn't a request, but has a `ref` to answer, as
+            // `handle` answers it.
+            "reply_invalid" => {
+                let (error, reference) = parse(a["request"].as_str().unwrap().as_bytes())
+                    .expect_err("an invalid request");
+                crate::events::reply_error(
+                    reference.expect("a ref").into(),
+                    format!("invalid platform call: {error}"),
+                )
+            }
+            _ => return None,
+        })
+    }
+
+    /// What `run` does with `request`'s arguments before it needs a window
+    /// or the platform: the error it fails with, if any.
+    fn args_error(request: &Request) -> Option<String> {
+        let text = |key: &str| {
+            request.args[key]
+                .as_str()
+                .map_or(Some(format!("no `{key}`")), |_| None)
+        };
+        let window = || {
+            serde_json::from_value::<WindowArgs>(request.args.clone())
+                .err()
+                .map(|e| e.to_string())
+        };
+        match request.call.as_str() {
+            "clipboard.read" | "app.appearance" => None,
+            "clipboard.write" => text("text"),
+            "app.open_url" => text("url"),
+            "menu.set" => serde_json::from_value::<Vec<MenuSpec>>(request.args["menus"].clone())
+                .err()
+                .map(|e| e.to_string()),
+            "window.open" | "window.close" | "window.set_title" | "window.set_bounds"
+            | "window.info" => window(),
+            other => Some(format!("no platform call `{other}`")),
+        }
+    }
+
+    const CALLS: [&str; 10] = [
+        "clipboard.read",
+        "clipboard.write",
+        "app.appearance",
+        "app.open_url",
+        "menu.set",
+        "window.open",
+        "window.close",
+        "window.set_title",
+        "window.set_bounds",
+        "window.info",
+    ];
+
+    fn calls_fixture() -> Vec<Value> {
+        serde_json::from_str(include_str!("../../fixtures/calls.json")).unwrap()
+    }
+
+    #[test]
+    fn every_call_fixture_request_parses() {
+        let mut seen = std::collections::BTreeSet::new();
+        for case in calls_fixture().iter().filter(|c| c.get("reply").is_none()) {
+            let json = serde_json::to_vec(&case["json"]).unwrap();
+            let request = parse(&json).unwrap_or_else(|(e, _)| panic!("{}: {e}", case["name"]));
+            assert_eq!(request.call, case["json"]["call"], "{}", case["name"]);
+            assert_eq!(request.reference, case["json"]["ref"], "{}", case["name"]);
+            assert_eq!(request.args, case["json"]["args"], "{}", case["name"]);
+            // Its arguments are ones the call accepts.
+            assert_eq!(args_error(&request), None, "{}", case["name"]);
+            seen.insert(request.call);
+        }
+        assert_eq!(seen.into_iter().collect::<Vec<_>>(), {
+            let mut all = CALLS.map(String::from).to_vec();
+            all.sort();
+            all
+        });
+    }
+
+    #[test]
+    fn the_fixture_names_the_calls_run_handles() {
+        // `run`'s match arms, read from the source.
+        let source = include_str!("platform.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        let handled: std::collections::BTreeSet<&str> = source
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix('"')?.split_once("\" =>"))
+            .map(|(name, _)| name)
+            .filter(|n| n.contains('.'))
+            .collect();
+        assert_eq!(handled, CALLS.into_iter().collect());
+    }
+
+    #[test]
+    fn invalid_call_fixture_requests_get_the_stated_reply() {
+        let mut answered = 0;
+        for case in calls_fixture().iter().filter(|c| c.get("reply").is_some()) {
+            let name = &case["name"];
+            let reply = match case["raw"].as_str() {
+                // Text that isn't a request: `handle`'s answer, if it has a ref.
+                Some(raw) => match parse(raw.as_bytes()) {
+                    Ok(_) => panic!("{name}: parses"),
+                    Err((error, reference)) => reference.map_or(Value::Null, |reference| {
+                        crate::events::reply_error(
+                            reference.into(),
+                            format!("invalid platform call: {error}"),
+                        )
+                    }),
+                },
+                // A request `run` fails on, before it needs a window.
+                None => {
+                    let json = serde_json::to_vec(&case["json"]).unwrap();
+                    let request = parse(&json).unwrap_or_else(|(e, _)| panic!("{name}: {e}"));
+                    let error = args_error(&request).unwrap_or_else(|| panic!("{name}: no error"));
+                    reply_for(&request, Err(error))
+                }
+            };
+            assert_eq!(reply, case["reply"], "{name}");
+            answered += usize::from(!reply.is_null());
+        }
+        assert!(answered > 0);
+    }
+}
