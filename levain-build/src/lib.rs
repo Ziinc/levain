@@ -49,9 +49,71 @@ pub fn env_var(name: &str) -> Option<OsString> {
     pick(name, |n| std::env::var_os(n))
 }
 
+/// The `cargo::metadata` lines that pass on the Android libraries of the
+/// Tauri plugins a crate depends on (its `DEP_*_ANDROID_LIBRARY_PATH`
+/// variables), sorted.
+///
+/// tauri-build adds a plugin's Kotlin code to the Android project from the
+/// app crate's own `DEP_*_ANDROID_LIBRARY_PATH` variables, and Cargo gives a
+/// build script only its direct dependencies' metadata. levain depends on
+/// the plugins in a host's place, so its build script (with `links =
+/// "levain"`) prints these, and the host's sees each as
+/// `DEP_LEVAIN_*_ANDROID_LIBRARY_PATH`. Tauri's own library is left out:
+/// the host depends on tauri and gets it directly.
+pub fn android_library_metadata(vars: impl IntoIterator<Item = (String, String)>) -> Vec<String> {
+    let mut lines: Vec<String> = vars
+        .into_iter()
+        .filter(|(key, _)| key != "DEP_TAURI_ANDROID_LIBRARY_PATH")
+        .filter_map(|(key, path)| {
+            let name = key.strip_prefix("DEP_")?;
+            name.ends_with("_ANDROID_LIBRARY_PATH")
+                .then(|| format!("cargo::metadata={}={path}", name.to_lowercase()))
+        })
+        .collect();
+    lines.sort();
+    lines
+}
+
+/// Passes on the Android libraries of the Tauri plugins this crate depends
+/// on to the crates that depend on it (see [`android_library_metadata`]).
+/// For a build script of a crate with a `links` key.
+pub fn reexport_android_libraries() {
+    let vars = std::env::vars_os()
+        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)));
+    for line in android_library_metadata(vars) {
+        println!("{line}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plugins_android_libraries_are_passed_on_but_not_tauris_own() {
+        let vars = [
+            (
+                "DEP_TAURI_PLUGIN_DIALOG_ANDROID_LIBRARY_PATH",
+                "/p/dialog/android",
+            ),
+            (
+                "DEP_TAURI_PLUGIN_GPUI_ANDROID_LIBRARY_PATH",
+                "/p/gpui/android",
+            ),
+            // The host depends on tauri itself and gets this one directly.
+            ("DEP_TAURI_ANDROID_LIBRARY_PATH", "/p/tauri/android"),
+            ("DEP_TAURI_DEV", "true"),
+            ("PATH", "/bin"),
+        ]
+        .map(|(k, v)| (k.to_owned(), v.to_owned()));
+        assert_eq!(
+            android_library_metadata(vars),
+            [
+                "cargo::metadata=tauri_plugin_dialog_android_library_path=/p/dialog/android",
+                "cargo::metadata=tauri_plugin_gpui_android_library_path=/p/gpui/android",
+            ]
+        );
+    }
 
     fn lookup(set: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<OsString> {
         move |name| {

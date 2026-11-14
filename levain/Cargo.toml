@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
+# Its build script passes its Tauri plugins' Android libraries on to the host
+# (`levain_build::reexport_android_libraries`).
+links = "levain"
 description = "The shared native host of the Boulangerie libraries: GPUI on Tauri, driven over a C ABI"
 
 [features]
@@ -14,6 +17,9 @@ components-gpui-kit = []
 # Serves the app's windows to Playwright clients (gpui-playwright) when
 # GPUI_PLAYWRIGHT is set. Test builds only: release builds leave it out.
 playwright = ["dep:gpui-playwright", "gpui-kit/test-support", "gpui-playwright/painted-text"]
+
+[build-dependencies]
+levain-build = { path = "../levain-build" }
 
 [dependencies]
 async-channel = "2"

@@ -15,6 +15,7 @@ fn main() {
     );
     record_versions();
     embed_app();
+    levain_build::reexport_android_libraries();
 }
 
 /// A levain variable, or the same with a `TAURI_` prefix: Tauri's iOS build

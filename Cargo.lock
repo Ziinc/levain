@@ -4753,6 +4753,7 @@ dependencies = [
  "gpui-kit",
  "gpui-playwright",
  "levain-abi",
+ "levain-build",
  "libc",
  "log",
  "rust-embed",
