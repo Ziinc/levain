@@ -616,7 +616,9 @@ mod call_tests {
         assert_eq!(closed["result"], Value::Null, "{closed}");
     }
 
-    #[cfg(desktop)]
+    // macOS builds menu items through muda, which refuses to make one off
+    // the main thread; a test runs on a worker thread.
+    #[cfg(all(desktop, not(target_os = "macos")))]
     #[gpui_kit::test]
     fn the_menu_bar_is_set_from_the_apps_menus(cx: &mut gpui_kit::TestAppContext) {
         let (h, app, opened) = setup();
