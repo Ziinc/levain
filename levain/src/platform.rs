@@ -53,14 +53,11 @@ pub enum ItemSpec {
 /// Runs `json` and sends Elixir the reply: `result`, or `error` and a nil
 /// result.
 pub fn handle(json: &[u8], app: &tauri::AppHandle, cx: &mut gpui::App) {
-    let request: Request = match serde_json::from_slice(json) {
+    let request = match parse(json) {
         Ok(request) => request,
-        Err(error) => {
+        Err((error, reference)) => {
             crate::log_line(&format!("baguette: invalid platform call: {error}"));
             // Answer it if it has a ref, so its caller doesn't wait.
-            let reference = serde_json::from_slice::<Value>(json)
-                .ok()
-                .and_then(|call| call["ref"].as_u64());
             if let Some(reference) = reference {
                 bridge::emit(&crate::events::reply_error(
                     reference.into(),
@@ -70,14 +67,28 @@ pub fn handle(json: &[u8], app: &tauri::AppHandle, cx: &mut gpui::App) {
             return;
         }
     };
-    let reply = match run(&request, app, cx) {
+    bridge::emit(&reply_for(&request, run(&request, app, cx)));
+}
+
+/// The request in `json`; or why it isn't one, and its `ref` if it has one.
+fn parse(json: &[u8]) -> Result<Request, (serde_json::Error, Option<u64>)> {
+    serde_json::from_slice(json).map_err(|error| {
+        let reference = serde_json::from_slice::<Value>(json)
+            .ok()
+            .and_then(|call| call["ref"].as_u64());
+        (error, reference)
+    })
+}
+
+/// The reply event for how `request` went.
+fn reply_for(request: &Request, outcome: Result<Value, String>) -> Value {
+    match outcome {
         Ok(result) => crate::events::reply(request.reference.into(), result),
         Err(error) => crate::events::reply_error(
             request.reference.into(),
             format!("{}: {error}", request.call),
         ),
-    };
-    bridge::emit(&reply);
+    }
 }
 
 fn run(request: &Request, app: &tauri::AppHandle, cx: &mut gpui::App) -> Result<Value, String> {
@@ -294,5 +305,90 @@ mod tests {
     fn names_appearances() {
         assert_eq!(appearance(WindowAppearance::VibrantDark), "dark");
         assert_eq!(appearance(WindowAppearance::Light), "light");
+    }
+
+    #[test]
+    fn names_every_appearance() {
+        assert_eq!(appearance(WindowAppearance::Dark), "dark");
+        assert_eq!(appearance(WindowAppearance::VibrantLight), "light");
+    }
+
+    #[test]
+    fn requests_default_to_no_args() {
+        let request = parse(br#"{"call": "clipboard.read", "ref": 1}"#).unwrap();
+        assert_eq!(request.args, Value::Null);
+        // `ref` is required, and a string is not one.
+        assert!(parse(br#"{"call": "clipboard.read"}"#).is_err());
+        assert!(parse(br#"{"call": "x", "ref": "1"}"#).is_err());
+    }
+
+    #[test]
+    fn invalid_calls_keep_their_ref_to_be_answered() {
+        // Valid JSON that isn't a request: no `call`.
+        let (error, reference) = parse(br#"{"ref": 12, "args": {}}"#).unwrap_err();
+        assert_eq!(reference, Some(12));
+        assert!(error.to_string().contains("call"), "{error}");
+        // Not JSON at all: nothing to answer.
+        assert_eq!(parse(b"not json").unwrap_err().1, None);
+        // A ref that isn't a number can't be answered either.
+        assert_eq!(parse(br#"{"ref": "x"}"#).unwrap_err().1, None);
+    }
+
+    #[test]
+    fn replies_carry_the_ref_and_the_result_or_error() {
+        let request =
+            parse(br#"{"call": "window.info", "ref": 5, "args": {"window": 1}}"#).unwrap();
+        assert_eq!(
+            reply_for(&request, Ok(json!({"title": "T"}))),
+            json!({"type": "reply", "ref": 5, "result": {"title": "T"}})
+        );
+        assert_eq!(
+            reply_for(&request, Err("no such window".into())),
+            json!({
+                "type": "reply",
+                "ref": 5,
+                "result": null,
+                "error": "window.info: no such window",
+            })
+        );
+    }
+
+    #[test]
+    fn menu_items_need_an_id_and_a_label() {
+        assert!(
+            serde_json::from_str::<MenuSpec>(r#"{"title": "File", "items": [{"id": "new"}]}"#)
+                .is_err()
+        );
+        let menu: MenuSpec = serde_json::from_str(
+            r#"{"title": "File", "items": [{"id": "new", "label": "New", "keys": null}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            menu.items,
+            [ItemSpec::Item {
+                id: "new".into(),
+                label: "New".into(),
+                keys: None
+            }]
+        );
+    }
+
+    #[test]
+    fn window_args_need_only_a_window() {
+        let args: WindowArgs =
+            serde_json::from_value(json!({"window": 1, "width": 640.5})).unwrap();
+        assert_eq!(
+            (args.window, args.width, args.height),
+            (1, Some(640.5), None)
+        );
+        assert!(serde_json::from_value::<WindowArgs>(json!({"title": "x"})).is_err());
+    }
+
+    #[test]
+    fn accelerators_keep_unknown_parts_and_capitalise_keys() {
+        assert_eq!(accelerator("platform-q"), "Cmd+Q");
+        assert_eq!(accelerator("fn-f1"), "Fn+F1");
+        assert_eq!(accelerator("escape"), "Escape");
+        assert_eq!(accelerator("secondary-shift--"), "CmdOrCtrl+Shift+-");
     }
 }

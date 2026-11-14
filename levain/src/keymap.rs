@@ -184,4 +184,76 @@ mod tests {
         let built = ElixirAction::build(serde_json::json!({"name": "a"})).unwrap();
         assert!(built.partial_eq(&a));
     }
+
+    #[test]
+    fn bindings_read_with_or_without_a_context() {
+        let bindings: Vec<Binding> = serde_json::from_str(
+            r#"[{"keys": "escape", "action": "close"},
+                {"keys": "ctrl-k", "action": "open", "context": "Jobs"}]"#,
+        )
+        .unwrap();
+        assert_eq!(bindings[0], binding_of("escape", "close", None));
+        assert_eq!(bindings[1].context.as_deref(), Some("Jobs"));
+        assert!(serde_json::from_str::<Binding>(r#"{"keys": "k"}"#).is_err());
+    }
+
+    fn binding_of(keys: &str, action: &str, context: Option<&str>) -> Binding {
+        Binding {
+            keys: keys.into(),
+            action: action.into(),
+            context: context.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn windows_have_their_own_contexts() {
+        assert_eq!(window_context(0), "baguette-window-0");
+        assert_ne!(window_context(1), window_context(11));
+    }
+
+    #[test]
+    fn whitespace_only_keys_are_refused_with_the_action_named() {
+        let error = key_binding(&binding_of("  ", "save", None), &DummyKeyboardMapper)
+            .err()
+            .unwrap();
+        assert_eq!(error, "`save` has no keys");
+    }
+
+    #[test]
+    fn chords_of_several_keystrokes_bind() {
+        let key = key_binding(&binding("ctrl-k ctrl-s", None), &DummyKeyboardMapper).unwrap();
+        assert_eq!(key.keystrokes().len(), 2);
+    }
+
+    #[test]
+    fn contexts_with_a_parent_chain_parse() {
+        let nested = binding("k", Some("Workspace > Editor && !Input"));
+        assert!(
+            key_binding(&nested, &DummyKeyboardMapper)
+                .unwrap()
+                .predicate()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn actions_name_themselves_and_clone() {
+        let a = ElixirAction { name: "go".into() };
+        assert_eq!(a.name(), "baguette::ElixirAction");
+        assert_eq!(ElixirAction::name_for_type(), "baguette::ElixirAction");
+        assert!(a.boxed_clone().partial_eq(&a));
+        assert!(ElixirAction::build(serde_json::json!({"nom": "a"})).is_err());
+        assert!(ElixirAction::build(serde_json::json!({})).is_err());
+    }
+
+    #[test]
+    fn a_scoped_binding_with_a_nested_context_still_binds_the_window_first() {
+        let scoped = scoped(7, &binding_of("k", "x", Some("A > B")));
+        assert_eq!(
+            scoped.context.as_deref(),
+            Some("baguette-window-7 > (A > B)")
+        );
+        assert_eq!(scoped.keys, "k");
+        assert_eq!(scoped.action, "x");
+    }
 }

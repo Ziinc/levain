@@ -349,4 +349,139 @@ mod tests {
         assert_eq!(path("M 1 1 l 2 2 L 5 5"), vec![Segment::Move(1., 1.)]);
         assert_eq!(path("M 1"), vec![]);
     }
+
+    fn one(tag: &str, attrs: &[(&str, &str)], theme: &Theme) -> Shape {
+        shapes(&[el(tag, attrs)], theme).pop().expect("a shape")
+    }
+
+    #[test]
+    fn lines_run_between_their_endpoints_in_black() {
+        let line = one(
+            "line",
+            &[("x1", "1"), ("y1", "2"), ("x2", "3"), ("y2", "4")],
+            &Theme::new(),
+        );
+        assert_eq!(
+            line.geometry,
+            Geometry::Path(vec![Segment::Move(1., 2.), Segment::Line(3., 4.)])
+        );
+        assert_eq!((line.fill, line.stroke), (None, Some(gpui::black())));
+        assert_eq!(line.stroke_width, 1.);
+    }
+
+    #[test]
+    fn closed_shapes_without_a_colour_are_filled_black() {
+        let theme = Theme::new();
+        for (tag, attrs) in [
+            ("rect", &[][..]),
+            ("circle", &[]),
+            ("polygon", &[("points", "0,0 4,0 4,4")]),
+            ("path", &[("d", "M 0 0 L 5 5")]),
+        ] {
+            let shape = one(tag, attrs, &theme);
+            assert_eq!(
+                (shape.fill, shape.stroke),
+                (Some(gpui::black()), None),
+                "{tag}"
+            );
+        }
+    }
+
+    #[test]
+    fn polygons_close_and_odd_coordinates_are_dropped() {
+        let polygon = one("polygon", &[("points", "0,0 10,0  10,10 7")], &Theme::new());
+        assert_eq!(
+            polygon.geometry,
+            Geometry::Path(vec![
+                Segment::Move(0., 0.),
+                Segment::Line(10., 0.),
+                Segment::Line(10., 10.),
+                Segment::Close,
+            ])
+        );
+        // No points: nothing to draw, but still a shape.
+        let empty = one("polyline", &[], &Theme::new());
+        assert_eq!(empty.geometry, Geometry::Path(vec![]));
+    }
+
+    #[test]
+    fn colours_come_from_fill_and_stroke_classes() {
+        let theme: Theme = [("danger".to_string(), "#ff0000".to_string())].into();
+        let both = one(
+            "rect",
+            &[
+                ("class", "w-4 fill-[#00ff00] stroke-danger"),
+                ("stroke-width", "2.5"),
+            ],
+            &theme,
+        );
+        assert_eq!(both.fill, style::color("[#00ff00]", &theme),);
+        assert_eq!(both.stroke, style::color("danger", &theme));
+        assert_eq!(both.stroke_width, 2.5);
+        // A token the theme lacks is no colour: the shape falls back to black.
+        let unknown = one("rect", &[("class", "fill-nope")], &theme);
+        assert_eq!(unknown.fill, Some(gpui::black()));
+        // Only a stroke class leaves the fill off.
+        let outline = one("circle", &[("class", "stroke-danger")], &theme);
+        assert_eq!(outline.fill, None);
+        // A bad width keeps the default.
+        let wide = one("rect", &[("stroke-width", "thick")], &theme);
+        assert_eq!(wide.stroke_width, 1.);
+    }
+
+    #[test]
+    fn numbers_tolerate_whitespace_and_junk() {
+        let theme = Theme::new();
+        let rect = one(
+            "rect",
+            &[("x", " 4 "), ("y", "oops"), ("width", "-2"), ("rx", "1.5")],
+            &theme,
+        );
+        assert_eq!(
+            rect.geometry,
+            Geometry::Rect {
+                x: 4.,
+                y: 0.,
+                width: -2.,
+                height: 0.,
+                radius: 1.5
+            }
+        );
+    }
+
+    #[test]
+    fn path_data_relative_to_the_pen() {
+        // `H` and `V` keep the other coordinate of the last point, also after
+        // curves.
+        assert_eq!(
+            path("M 1 2 C 0 0 0 0 5 6 H 9 V 1"),
+            vec![
+                Segment::Move(1., 2.),
+                Segment::Cubic(0., 0., 0., 0., 5., 6.),
+                Segment::Line(9., 6.),
+                Segment::Line(9., 1.),
+            ]
+        );
+        assert_eq!(
+            path("M 0 0 Q 1 2 3 4 V 9"),
+            vec![
+                Segment::Move(0., 0.),
+                Segment::Quad(1., 2., 3., 4.),
+                Segment::Line(3., 9.),
+            ]
+        );
+    }
+
+    #[test]
+    fn path_data_ends_at_bad_numbers_and_accepts_lowercase_z() {
+        assert_eq!(path("M 0 0 L 1 x L 5 5"), vec![Segment::Move(0., 0.)],);
+        // Too few numbers for the command.
+        assert_eq!(path("M 0 0 L 4"), vec![Segment::Move(0., 0.)]);
+        assert_eq!(
+            path("M0,0L3,4z"),
+            vec![Segment::Move(0., 0.), Segment::Line(3., 4.), Segment::Close]
+        );
+        assert_eq!(path(""), vec![]);
+        assert_eq!(path("   "), vec![]);
+    }
 }

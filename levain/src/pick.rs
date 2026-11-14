@@ -104,3 +104,95 @@ impl Pick {
         ));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bridge::testing::harness;
+    use serde_json::json;
+
+    fn attrs(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn elements_without_a_picker_attribute_are_not_pickers() {
+        assert!(Pick::from_attrs(0, &attrs(&[("phx-click", "go")])).is_none());
+        assert!(Pick::from_attrs(0, &BTreeMap::new()).is_none());
+    }
+
+    #[test]
+    fn reads_an_open_picker() {
+        let pick = Pick::from_attrs(
+            3,
+            &attrs(&[
+                ("phx-pick-file", "chosen"),
+                ("accept", "csv, .xlsx,,  "),
+                ("phx-value-kind", "import"),
+                ("class", "ignored"),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(
+            (pick.window, pick.event.as_str(), pick.save),
+            (3, "chosen", false)
+        );
+        assert_eq!(pick.accept, ["csv", "xlsx"]);
+        assert_eq!(pick.values, attrs(&[("kind", "import")]));
+        assert_eq!(pick.default_name, None);
+    }
+
+    #[test]
+    fn reads_a_save_picker() {
+        let pick = Pick::from_attrs(
+            0,
+            &attrs(&[("phx-pick-save", "saved"), ("default-name", "out.csv")]),
+        )
+        .unwrap();
+        assert!(pick.save && pick.accept.is_empty());
+        assert_eq!(pick.event, "saved");
+        assert_eq!(pick.default_name.as_deref(), Some("out.csv"));
+    }
+
+    #[test]
+    fn open_wins_when_both_attributes_are_given() {
+        let pick =
+            Pick::from_attrs(0, &attrs(&[("phx-pick-save", "s"), ("phx-pick-file", "f")])).unwrap();
+        assert_eq!((pick.event.as_str(), pick.save), ("f", false));
+    }
+
+    #[test]
+    fn sends_the_path_with_the_values() {
+        let h = harness();
+        let pick = Pick::from_attrs(
+            4,
+            &attrs(&[("phx-pick-file", "chosen"), ("phx-value-id", "7")]),
+        )
+        .unwrap();
+        pick.send("/tmp/a.csv".into());
+        assert_eq!(
+            h.events(),
+            [json!({
+                "type": "pick",
+                "window": 4,
+                "event": "chosen",
+                "values": {"id": "7", "path": "/tmp/a.csv"},
+            })]
+        );
+    }
+
+    #[test]
+    fn the_path_overrides_a_value_called_path() {
+        let h = harness();
+        let pick = Pick::from_attrs(
+            0,
+            &attrs(&[("phx-pick-save", "saved"), ("phx-value-path", "stale")]),
+        )
+        .unwrap();
+        pick.send("/new".into());
+        assert_eq!(h.events()[0]["values"], json!({"path": "/new"}));
+    }
+}

@@ -177,4 +177,42 @@ mod tests {
             br#"{"rows": {"id": "a", "start": 0, "rows": []}}"#
         ));
     }
+
+    #[test]
+    fn a_frame_replaces_everything_queued() {
+        let mut q = Vec::new();
+        assert!(queue(&mut q, br#"{"root": "first"}"#.to_vec()));
+        assert!(queue(&mut q, br#"{"patch": []}"#.to_vec()));
+        assert!(queue(
+            &mut q,
+            br#"{"rows": {"id": "a", "start": 0, "rows": []}}"#.to_vec()
+        ));
+        assert!(queue(&mut q, br#"{"root": "second"}"#.to_vec()));
+        assert_eq!(q, [br#"{"root": "second"}"#.to_vec()]);
+    }
+
+    #[test]
+    fn a_frame_restarts_a_full_queue() {
+        let mut q = Vec::new();
+        assert!(queue(&mut q, br#"{"root": null}"#.to_vec()));
+        for _ in 1..MAX_QUEUED {
+            assert!(queue(&mut q, br#"{"patch": []}"#.to_vec()));
+        }
+        // A frame needs no queue to follow, and makes room.
+        assert!(queue(&mut q, br#"{"root": null}"#.to_vec()));
+        assert_eq!(q.len(), 1);
+    }
+
+    #[test]
+    fn rows_without_a_frame_ask_for_one() {
+        let mut q = Vec::new();
+        let rows = br#"{"rows": {"id": "a", "start": 0, "rows": []}}"#;
+        assert!(!queue(&mut q, rows.to_vec()));
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn what_is_not_json_is_not_a_frame() {
+        assert!(!is_frame(b"nope"));
+    }
 }
