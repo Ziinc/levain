@@ -268,7 +268,7 @@ fn reported(class: &str) -> bool {
 fn unknown<S>(s: S, class: &str) -> S {
     let mut reported = REPORTED.lock().unwrap();
     if reported.get_or_insert_default().insert(class.to_owned()) {
-        eprintln!("levain: unsupported class `{class}`");
+        crate::log_line(&format!("levain: unsupported class `{class}`"));
     }
     s
 }

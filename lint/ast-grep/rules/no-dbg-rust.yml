@@ -1,0 +1,11 @@
+id: no-dbg-rust
+language: rust
+severity: error
+message: >
+  Do not commit dbg!(...). It prints to stderr, bypassing the platform log,
+  and is meant for a debugging session only. Remove it, or log through
+  crate::log_line (levain) or levain::log_line (a language host).
+files:
+  - "**/*.rs"
+rule:
+  pattern: dbg!($$$)

@@ -335,6 +335,21 @@ On Linux, GPUI and Tauri need system libraries; see
 `.github/workflows/ci.yml`. CI tests on Linux, macOS and Windows and builds
 for iOS and Android.
 
+### Linting
+
+CI's `lint` job also runs [ast-grep](https://ast-grep.github.io) rules
+(`lint/ast-grep`, configured by `sgconfig.yml`), [typos](https://github.com/crate-ci/typos),
+[cargo-machete](https://github.com/bnjbvr/cargo-machete) and
+[cargo-deny](https://github.com/EmbarkStudios/cargo-deny) (`deny.toml`):
+
+```sh
+ast-grep test   # the rules' own tests; `-U` updates their snapshots
+ast-grep scan
+typos
+cargo machete
+cargo deny --locked check
+```
+
 `e2e/` drives the echo host with Playwright through gpui-playwright (Linux
 CI, under `xvfb-run`):
 

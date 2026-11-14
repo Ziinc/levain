@@ -18,6 +18,12 @@ components-gpui-kit = []
 # GPUI_PLAYWRIGHT is set. Test builds only: release builds leave it out.
 playwright = ["dep:gpui-playwright", "gpui-kit/test-support", "gpui-playwright/painted-text"]
 
+# Not used in source: it only turns on `debug-embed` for the rust-embed that
+# gpui-kit's icon catalog derives (see the dependency below), which cargo
+# machete cannot see.
+[package.metadata.cargo-machete]
+ignored = ["rust-embed"]
+
 [build-dependencies]
 levain-build = { path = "../levain-build" }
 

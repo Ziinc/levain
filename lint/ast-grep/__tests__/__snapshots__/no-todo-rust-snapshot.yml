@@ -1,0 +1,29 @@
+id: no-todo-rust
+snapshots:
+  ? |
+    fn unsupported() -> u32 {
+      todo!("later")
+    }
+  : labels:
+    - source: todo!("later")
+      style: primary
+      start: 28
+      end: 42
+  ? |
+    fn unsupported() -> u32 {
+      unimplemented!()
+    }
+  : labels:
+    - source: unimplemented!()
+      style: primary
+      start: 28
+      end: 44
+  ? |
+    fn unsupported() {
+      todo!();
+    }
+  : labels:
+    - source: todo!()
+      style: primary
+      start: 21
+      end: 28

@@ -1,0 +1,15 @@
+id: no-dbg-rust
+valid:
+  - |
+    fn doubles(x: u32) -> u32 {
+      x * 2
+    }
+invalid:
+  - |
+    fn doubles(x: u32) -> u32 {
+      dbg!(x * 2)
+    }
+  - |
+    fn marker() {
+      dbg!();
+    }

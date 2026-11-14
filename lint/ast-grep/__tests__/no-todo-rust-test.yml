@@ -1,0 +1,27 @@
+id: no-todo-rust
+valid:
+  - |
+    fn unsupported() -> Result<(), String> {
+      Err("not supported".to_string())
+    }
+  - |
+    #[cfg(test)]
+    mod tests {
+      #[test]
+      fn pending() {
+        todo!();
+      }
+    }
+invalid:
+  - |
+    fn unsupported() {
+      todo!();
+    }
+  - |
+    fn unsupported() -> u32 {
+      todo!("later")
+    }
+  - |
+    fn unsupported() -> u32 {
+      unimplemented!()
+    }

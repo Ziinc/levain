@@ -1,0 +1,11 @@
+id: no-println-rust
+snapshots:
+  ? |
+    fn logs(line: &str) {
+      println!("{line}");
+    }
+  : labels:
+    - source: println!("{line}")
+      style: primary
+      start: 24
+      end: 42

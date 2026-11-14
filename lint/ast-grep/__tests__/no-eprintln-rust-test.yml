@@ -1,0 +1,27 @@
+id: no-eprintln-rust
+valid:
+  - |
+    fn logs_a_warning(class: &str) {
+      crate::log_line(&format!("levain: unsupported class `{class}`"));
+    }
+  - |
+    fn prints_a_message() {
+      println!("hello");
+    }
+  - |
+    #[cfg(test)]
+    mod tests {
+      #[test]
+      fn prints_while_debugging() {
+        eprintln!("state");
+      }
+    }
+invalid:
+  - |
+    fn logs_via_eprintln(class: &str) {
+      eprintln!("levain: unsupported class `{class}`");
+    }
+  - |
+    fn debug_dumps_a_value(result: &str) {
+      eprintln!("resolve result: {:?}", result);
+    }
