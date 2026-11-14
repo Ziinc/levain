@@ -1,6 +1,6 @@
 name: Release
 
-# Pushing a `vX.Y.Z` tag publishes levain-abi and levain-pack to crates.io,
+# Pushing a `vX.Y.Z` tag publishes levain-abi, levain-build and levain-pack to crates.io,
 # builds levain-pack for every desktop target, and creates a GitHub release
 # for the tag with those binaries, their SHA-256s and generated notes. The
 # tag must match the workspace version and point at a commit on main.
@@ -119,7 +119,7 @@ jobs:
         id: plan
         run: |
           pending=""
-          for crate in levain-abi levain-pack; do
+          for crate in levain-abi levain-build levain-pack; do
             version=$(cargo metadata --no-deps --format-version 1 \
               | jq -r --arg crate "$crate" '.packages[] | select(.name == $crate) | .version')
             if curl -sf -o /dev/null -A "levain-release (https://github.com/${GITHUB_REPOSITORY})" \
@@ -131,7 +131,8 @@ jobs:
           done
           echo "pending=${pending# }" >> "$GITHUB_OUTPUT"
 
-      # Neither crate links GPUI or Tauri, so no system libraries are needed.
+      # levain-abi and levain-pack link no GPUI or Tauri; levain-build only builds
+      # tauri-build, which needs no system libraries. Order is dependency order.
       - uses: dtolnay/rust-toolchain@stable
         if: steps.plan.outputs.pending != ''
       - uses: Swatinem/rust-cache@v2

@@ -9,6 +9,9 @@
 //! levain-pack bundle --project <dir> --host <exe> --host-name <name> --name <app>
 //!     --version <v> --identifier <id> --bundles <a,b> --target-dir <dir> --out <dir>
 //!     [--resource <from>=<to>]... [--config <extra>]
+//! levain-pack ios-crate --host-crate <name> --host-lib <lib name> --host-path <dir>
+//!     --out <dir> [--feature <f>]... [--default-feature <f>]... [--name <crate>]
+//!     [--product-name <n>] [--version <v>] [--identifier <id>]
 //! levain-pack init <android|ios> --project <dir> --config <json>
 //!     [--signing-env <PREFIX>] [--ldflags <flags>] [--env K=V]...
 //! levain-pack build <android|ios> --project <dir> --config <json>
@@ -17,6 +20,7 @@
 
 mod bundle;
 mod fetch;
+mod ios;
 mod mobile;
 
 use std::path::{Path, PathBuf};
@@ -30,7 +34,7 @@ fn main() {
 }
 
 fn run(args: &[String]) -> Result<(), String> {
-    let (command, rest) = args.split_first().ok_or(USAGE)?;
+    let (command, rest) = args.split_first().ok_or_else(usage)?;
     let mut opts = Opts::parse(rest)?;
     match command.as_str() {
         "target" => {
@@ -98,12 +102,48 @@ fn run(args: &[String]) -> Result<(), String> {
                 mobile::build(platform, &project, &config, &opts.rest, &products, &env)?;
             }
         }
-        _ => return Err(USAGE.into()),
+        "ios-crate" => {
+            let mut spec = ios::IosCrate::new(
+                &opts.one("host-crate")?,
+                &opts.one("host-lib")?,
+                &opts.one("host-path")?,
+            );
+            spec.features = opts.all("feature");
+            spec.default_features = opts.all("default-feature");
+            if let Some(name) = opts.maybe("name") {
+                spec.name = name;
+            }
+            if let Some(name) = opts.maybe("product-name") {
+                spec.product_name = name;
+            }
+            if let Some(version) = opts.maybe("version") {
+                spec.version = version;
+            }
+            if let Some(id) = opts.maybe("identifier") {
+                spec.identifier = id;
+            }
+            let out = opts.path("out")?;
+            ios::write(&spec, &out)?;
+        }
+        _ => return Err(format!("unknown command {command}\n{}", usage())),
     }
     opts.finish()
 }
 
-const USAGE: &str = "usage: levain-pack <target|fetch|install|bundle|init|build> ...";
+/// Every subcommand `run` dispatches.
+const COMMANDS: [&str; 7] = [
+    "target",
+    "fetch",
+    "install",
+    "bundle",
+    "ios-crate",
+    "init",
+    "build",
+];
+
+fn usage() -> String {
+    format!("usage: levain-pack <{}> ...", COMMANDS.join("|"))
+}
 
 /// Copies the host to `dest`, executable. Replaces rather than overwrites,
 /// so a running copy doesn't block the build.
@@ -254,6 +294,60 @@ mod tests {
         assert_eq!(opts.finish(), Err("unknown option --nope".into()));
         assert!(run(&strings(&["target", "extra"])).is_err());
         assert!(run(&strings(&["frobnicate"])).is_err());
+    }
+
+    #[test]
+    fn usage_docs_and_dispatch_agree() {
+        let source = include_str!("main.rs");
+        let doc: String = source
+            .lines()
+            .take_while(|l| l.starts_with("//!"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for command in COMMANDS {
+            assert!(usage().contains(command));
+            // Dispatched: no arguments fail, but not as an unknown command.
+            if command != "target" {
+                let error = run(&[command.to_string()]).unwrap_err();
+                assert!(!error.starts_with("unknown command"), "{command}: {error}");
+            }
+        }
+        // And nothing the doc comment lists is missing from COMMANDS.
+        for line in doc
+            .lines()
+            .filter_map(|l| l.strip_prefix("//! levain-pack "))
+        {
+            let command = line.split_whitespace().next().unwrap();
+            assert!(COMMANDS.contains(&command), "{command} is not dispatched");
+        }
+        assert!(
+            run(&strings(&["nope"]))
+                .unwrap_err()
+                .starts_with("unknown command")
+        );
+    }
+
+    #[test]
+    fn ios_crate_writes_the_wrapper() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path().join("w");
+        let args = strings(&[
+            "ios-crate",
+            "--host-crate",
+            "h_host",
+            "--host-lib",
+            "h_lib",
+            "--host-path",
+            "../h_host",
+            "--feature",
+            "a",
+            "--out",
+            out.to_str().unwrap(),
+        ]);
+        run(&args).unwrap();
+        let cargo = std::fs::read_to_string(out.join("Cargo.toml")).unwrap();
+        assert!(cargo.contains("a = [\"h_host/a\"]"));
+        assert!(run(&strings(&["ios-crate", "--out", "x"])).is_err());
     }
 
     #[test]

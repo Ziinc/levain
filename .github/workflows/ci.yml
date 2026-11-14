@@ -15,7 +15,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2025]
+        os:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - macos-15
+          - macos-15-intel
+          - windows-2025
+          - windows-11-arm
     runs-on: ${{ matrix.os }}
     steps:
       # Check out files as committed (LF), as tests read some of them.
@@ -35,7 +41,8 @@ jobs:
             libssl-dev libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev mesa-vulkan-drivers \
             libwayland-dev libx11-xcb-dev libfontconfig-dev libfreetype-dev libgbm-dev \
             libegl-dev libxrandr-dev clang
-      - if: runner.os == 'Linux'
+      # Formatting does not vary by platform: one job checks it.
+      - if: matrix.os == 'ubuntu-24.04'
         run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
         shell: bash
