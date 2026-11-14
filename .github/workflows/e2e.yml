@@ -1,0 +1,47 @@
+name: e2e
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libxdo-dev \
+            libssl-dev libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev mesa-vulkan-drivers \
+            libwayland-dev libx11-xcb-dev libfontconfig-dev libfreetype-dev libgbm-dev \
+            libegl-dev libxrandr-dev clang fonts-dejavu xvfb
+      - name: Build the echo host
+        run: cargo build -p levain-echo --features playwright
+      - name: Install Playwright's test runner
+        working-directory: e2e
+        run: npm install
+      - name: Drive the host
+        working-directory: e2e
+        env:
+          # No GPU on the runner: Mesa's software Vulkan driver.
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+        run: xvfb-run -a npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-report
+          path: e2e/playwright-report
