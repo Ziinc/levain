@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["levain-abi", "levain", "levain-pack"]
+members = ["levain-abi", "levain", "levain-pack", "levain-build", "examples/echo"]
 
 [workspace.package]
 version = "0.1.0"

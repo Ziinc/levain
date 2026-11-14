@@ -4771,6 +4771,20 @@ name = "levain-abi"
 version = "0.1.0"
 
 [[package]]
+name = "levain-build"
+version = "0.1.0"
+
+[[package]]
+name = "levain-echo"
+version = "0.0.0"
+dependencies = [
+ "levain",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+]
+
+[[package]]
 name = "levain-pack"
 version = "0.1.0"
 dependencies = [
