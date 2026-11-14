@@ -41,6 +41,62 @@ pub fn open(
     Ok(())
 }
 
+/// Window 0's title and size, for opening it later.
+pub type Zero = (String, (f64, f64));
+
+/// Opens the app's windows. An app that declares a `cli` may run headless,
+/// so its window 0 is not opened at startup: it opens, with `zero`'s title
+/// and size, when the app first renders to window 0 or opens it. The render
+/// is not lost: it waits in [`Windows::queued`] for the window.
+pub struct Opener<F> {
+    open: F,
+    zero: std::cell::RefCell<Option<Zero>>,
+}
+
+impl<F> Opener<F>
+where
+    F: Fn(u32, &str, (f64, f64)) -> Result<(), Box<dyn std::error::Error>>,
+{
+    /// `zero` is `None` when window 0 is already open.
+    pub fn new(open: F, zero: Option<Zero>) -> Self {
+        Self {
+            open,
+            zero: zero.into(),
+        }
+    }
+
+    /// Opens window `id`; window 0, while it is waiting, with its own title
+    /// and size.
+    pub fn open(
+        &self,
+        id: u32,
+        title: &str,
+        size: (f64, f64),
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if id == 0
+            && let Some((title, size)) = self.zero.take()
+        {
+            return (self.open)(0, &title, size);
+        }
+        (self.open)(id, title, size)
+    }
+
+    /// Shows a render on its window; a first one for window 0 opens it first.
+    pub fn route(&self, msg: RenderMsg, cx: &mut gpui::App) {
+        self.before_render(msg.window);
+        route(msg, cx);
+    }
+
+    fn before_render(&self, window: u32) {
+        if window == 0
+            && let Some((title, size)) = self.zero.take()
+            && let Err(error) = (self.open)(0, &title, size)
+        {
+            crate::log_line(&format!("levain: could not open window 0: {error}"));
+        }
+    }
+}
+
 /// Window `id`'s Tauri window, without GPUI in it yet.
 pub fn build<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
@@ -341,8 +397,108 @@ mod tests {
         assert_eq!(told, [2, 3]);
     }
 
+    type Log = std::rc::Rc<std::cell::RefCell<Vec<(u32, String, (f64, f64))>>>;
+
+    // The opener holds a closure, which a type alias cannot name.
+    #[allow(clippy::type_complexity)]
+    fn opener(
+        zero: Option<Zero>,
+        fail: bool,
+    ) -> (
+        Opener<impl Fn(u32, &str, (f64, f64)) -> Result<(), Box<dyn std::error::Error>>>,
+        Log,
+    ) {
+        let log = Log::default();
+        let seen = log.clone();
+        let open = move |id: u32, title: &str, size| {
+            seen.borrow_mut().push((id, title.to_owned(), size));
+            if fail {
+                Err("no display".into())
+            } else {
+                Ok(())
+            }
+        };
+        (Opener::new(open, zero), log)
+    }
+
+    fn zero() -> Option<Zero> {
+        Some(("Echo".into(), (320., 200.)))
+    }
+
+    #[test]
+    fn window_zero_opens_on_its_first_render_only() {
+        let (opener, log) = opener(zero(), false);
+        opener.before_render(3);
+        assert!(log.borrow().is_empty());
+        opener.before_render(0);
+        opener.before_render(0);
+        assert_eq!(*log.borrow(), [(0, "Echo".to_owned(), (320., 200.))]);
+    }
+
+    #[gpui_kit::test]
+    fn the_render_that_opens_window_zero_is_not_lost(cx: &mut gpui_kit::TestAppContext) {
+        use crate::view::Node;
+        let h = crate::bridge::testing::harness();
+        h.events();
+        let (opener, log) = opener(zero(), false);
+        // Another window's render does not open it.
+        cx.update(|cx| opener.route(render(2, r#"{"root": "other"}"#), cx));
+        assert!(log.borrow().is_empty());
+        // Window 0's does, and what it sent waits for the window.
+        let frame = r#"{"root": {"t": "div", "c": ["first"]}}"#;
+        cx.update(|cx| opener.route(render(0, frame), cx));
+        let patch = r#"{"patch": [{"op": "replace", "at": [0], "node": "second"}]}"#;
+        cx.update(|cx| opener.route(render(0, patch), cx));
+        assert_eq!(*log.borrow(), [(0, "Echo".to_owned(), (320., 200.))]);
+        assert_eq!(shown(0, cx), None);
+        assert!(h.events().is_empty(), "nothing asked for a resync");
+        // The test's `open` made no window; it comes up now.
+        crate::testing::window(cx, 0);
+        let Some(Node::Element { children, .. }) = shown(0, cx) else {
+            panic!("the render was lost");
+        };
+        assert_eq!(children, [Node::Text("second".into())]);
+    }
+
+    #[test]
+    fn window_zero_opens_on_window_open_with_the_apps_title_and_size() {
+        let (opener, log) = opener(zero(), false);
+        opener.open(2, "Two", (1., 2.)).unwrap();
+        opener.open(0, "Ignored", (800., 600.)).unwrap();
+        // Open now: the call is the caller's again (Tauri refuses a duplicate).
+        opener.open(0, "Again", (5., 6.)).unwrap();
+        opener.before_render(0);
+        assert_eq!(
+            *log.borrow(),
+            [
+                (2, "Two".to_owned(), (1., 2.)),
+                (0, "Echo".to_owned(), (320., 200.)),
+                (0, "Again".to_owned(), (5., 6.)),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_app_without_a_cli_has_window_zero_open_already() {
+        let (opener, log) = opener(None, false);
+        opener.before_render(0);
+        assert!(log.borrow().is_empty());
+        opener.open(0, "Zero", (1., 1.)).unwrap();
+        assert_eq!(log.borrow().len(), 1);
+    }
+
+    #[test]
+    fn a_window_zero_that_fails_to_open_is_logged_and_not_retried() {
+        let (opener, log) = opener(zero(), true);
+        opener.before_render(0);
+        opener.before_render(0);
+        assert_eq!(log.borrow().len(), 1);
+    }
+
     #[test]
     fn what_is_not_json_is_not_a_frame() {
         assert!(!is_frame(b"nope"));
+        // Without a `root`, a message is not a frame (see `Frame`).
+        assert!(!is_frame(br#"{"patch": [{"op": "nope", "at": []}]}"#));
     }
 }

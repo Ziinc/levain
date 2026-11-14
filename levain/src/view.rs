@@ -42,7 +42,9 @@ pub enum Message {
 pub struct Frame {
     #[serde(default)]
     pub theme: Theme,
-    #[serde(default)]
+    /// Always sent (`null` for no view), so that a malformed patch or rows
+    /// message is not taken for an empty frame that blanks the window.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub root: Option<Node>,
     #[serde(default)]
     pub lists: HashMap<String, Segment>,
@@ -1550,8 +1552,16 @@ mod tests {
     }
 
     #[test]
-    fn what_is_not_a_message_is_an_error() {
-        for json in [r#""text""#, "not json"] {
+    // A message that is none of the three must not blank the window: it is
+    // reported as invalid (`windows::deliver` shows a notice).
+    fn malformed_messages_are_errors_not_empty_frames() {
+        for json in [
+            r#"{"patch": [{"op": "nope", "at": []}]}"#,
+            r#"{"rows": {"id": "a"}}"#,
+            r#"[]"#,
+            r#""text""#,
+            "not json",
+        ] {
             assert!(serde_json::from_str::<Message>(json).is_err(), "{json}");
         }
     }

@@ -49,12 +49,26 @@ pub enum ItemSpec {
     },
 }
 
+/// What `cli.matches` says when the app declared no `cli`.
+const NO_CLI: &str = "the app declares no cli";
+
 /// Runs `json` and sends the app the reply: `result`, or `error` and a nil
-/// result.
+/// result. `app.exit` exits the process once its reply is sent.
 pub fn handle<R: tauri::Runtime>(
     json: &[u8],
     app: &tauri::AppHandle<R>,
     open: OpenWindow,
+    cx: &mut gpui::App,
+) {
+    handle_with(json, app, open, &|code| app.exit(code), cx)
+}
+
+/// [`handle`], with `exit` as what ends the process.
+fn handle_with<R: tauri::Runtime>(
+    json: &[u8],
+    app: &tauri::AppHandle<R>,
+    open: OpenWindow,
+    exit: &dyn Fn(i32),
     cx: &mut gpui::App,
 ) {
     let request = match parse(json) {
@@ -71,7 +85,65 @@ pub fn handle<R: tauri::Runtime>(
             return;
         }
     };
-    bridge::emit(&reply_for(&request, run(&request, app, open, cx)));
+    let outcome = run(&request, app, open, cx);
+    let exiting = (request.call == "app.exit" && outcome.is_ok())
+        .then(|| exit_code(&request.args).unwrap_or(0));
+    bridge::emit(&reply_for(&request, outcome));
+    if let Some(code) = exiting {
+        // Nothing the app printed may be lost with the process.
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stderr().flush();
+        exit(code);
+    }
+}
+
+/// The `code` of `app.exit`'s arguments: 0 when there is none.
+fn exit_code(args: &Value) -> Result<i32, String> {
+    #[derive(Deserialize)]
+    struct ExitArgs {
+        code: Option<i32>,
+    }
+    if args.is_null() {
+        return Ok(0);
+    }
+    serde_json::from_value::<ExitArgs>(args.clone())
+        .map(|args| args.code.unwrap_or(0))
+        .map_err(|e| e.to_string())
+}
+
+/// The arguments this process was started with, parsed against the app's
+/// `cli` into the plugin's matches, as JSON.
+#[cfg(desktop)]
+fn cli_matches<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<Value, String> {
+    // Registered only when the app declared a `cli`.
+    let cli = app.try_state::<tauri_plugin_cli::Cli<R>>().ok_or(NO_CLI)?;
+    let matches = cli
+        .matches_from(process_args())
+        .map_err(|e| e.to_string())?;
+    serde_json::to_value(matches).map_err(|e| e.to_string())
+}
+
+/// Phones have no command line.
+#[cfg(mobile)]
+fn cli_matches<R: tauri::Runtime>(_: &tauri::AppHandle<R>) -> Result<Value, String> {
+    Err(NO_CLI.into())
+}
+
+#[cfg(all(desktop, not(test)))]
+fn process_args() -> Vec<String> {
+    std::env::args().collect()
+}
+
+#[cfg(all(desktop, test))]
+thread_local! {
+    /// The arguments tests parse instead of the test binary's own.
+    static TEST_ARGS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(all(desktop, test))]
+fn process_args() -> Vec<String> {
+    TEST_ARGS.with(|args| args.borrow().clone())
 }
 
 /// The request in `json`; or why it isn't one, and its `ref` if it has one.
@@ -138,6 +210,8 @@ fn run<R: tauri::Runtime>(
             let _ = menus;
             Ok(Value::Null)
         }
+        "cli.matches" => cli_matches(app),
+        "app.exit" => exit_code(&request.args).map(|_| Value::Null),
         "window.open" => {
             let args = args()?;
             let title = args.title.unwrap_or_default();
@@ -616,6 +690,140 @@ mod call_tests {
         assert_eq!(closed["result"], Value::Null, "{closed}");
     }
 
+    fn sum_cli() -> Value {
+        json!({"description": "Sums", "subcommands": {"sum": {
+            "args": [{"name": "a", "index": 1, "takesValue": true, "required": true},
+                     {"name": "b", "index": 2, "takesValue": true, "required": true},
+                     {"name": "json"}]}}})
+    }
+
+    #[cfg(desktop)]
+    #[gpui_kit::test]
+    fn cli_matches_is_what_the_plugin_parsed(cx: &mut gpui_kit::TestAppContext) {
+        let h = harness();
+        let app = fixture::cli_app(Some(sum_cli()));
+        let opened = Opened::default();
+        let ask = |cx: &mut _, argv: &[&str], n: u64| {
+            fixture::set_args(argv.iter().map(|a| a.to_string()));
+            call(
+                &h,
+                &app,
+                cx,
+                &opened,
+                json!({"call": "cli.matches", "ref": n}),
+            )
+        };
+        let reply = ask(cx, &["app", "sum", "2", "3", "--json"], 1);
+        assert_eq!(reply["ref"], 1);
+        let sub = &reply["result"]["subcommand"];
+        assert_eq!(sub["name"], "sum");
+        assert_eq!(
+            sub["matches"]["args"]["a"],
+            json!({"value": "2", "occurrences": 1})
+        );
+        assert_eq!(
+            sub["matches"]["args"]["json"],
+            json!({"value": true, "occurrences": 1})
+        );
+        // Without a subcommand: none.
+        let reply = ask(cx, &["app"], 2);
+        assert_eq!(reply["result"]["subcommand"], Value::Null);
+        // A parse error is the call's error.
+        let reply = ask(cx, &["app", "sum", "2"], 3);
+        assert_eq!(reply["result"], Value::Null);
+        assert!(
+            reply["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("cli.matches: failed to parse arguments: "),
+            "{reply}"
+        );
+        // `--help` is a match, carrying the text.
+        let reply = ask(cx, &["app", "--help"], 4);
+        assert!(
+            reply["result"]["args"]["help"]["value"]
+                .as_str()
+                .unwrap()
+                .contains("Sums")
+        );
+    }
+
+    #[gpui_kit::test]
+    fn cli_matches_without_a_declared_cli_is_an_error(cx: &mut gpui_kit::TestAppContext) {
+        let (h, app, opened) = setup();
+        assert_eq!(
+            call(
+                &h,
+                &app,
+                cx,
+                &opened,
+                json!({"call": "cli.matches", "ref": 1})
+            ),
+            json!({"type": "reply", "ref": 1, "result": null,
+                   "error": "cli.matches: the app declares no cli"})
+        );
+    }
+
+    /// Sends `request` to a mock app whose process exit is recorded in
+    /// `exits`; returns the reply events and what the log held at exit.
+    fn call_exiting(
+        cx: &mut gpui_kit::TestAppContext,
+        request: Value,
+    ) -> (Vec<Value>, Vec<(i32, usize)>) {
+        let (h, app, _) = setup();
+        let json = serde_json::to_vec(&request).unwrap();
+        let exits = RefCell::new(Vec::new());
+        cx.update(|cx| {
+            // The reply must already be sent when the process exits.
+            handle_with(
+                &json,
+                app.handle(),
+                &|_, _, _| Ok(()),
+                &|code| exits.borrow_mut().push((code, h.events().len())),
+                cx,
+            )
+        });
+        (h.events(), exits.into_inner())
+    }
+
+    #[gpui_kit::test]
+    fn app_exit_replies_then_exits_with_the_code(cx: &mut gpui_kit::TestAppContext) {
+        // The exit sees the reply already sent (and drains it), so the
+        // events after it are none.
+        let (events, exits) = call_exiting(
+            cx,
+            json!({"call": "app.exit", "ref": 1, "args": {"code": 3}}),
+        );
+        assert_eq!(exits, [(3, 1)]);
+        assert!(events.is_empty());
+    }
+
+    #[gpui_kit::test]
+    fn app_exit_defaults_to_code_zero(cx: &mut gpui_kit::TestAppContext) {
+        for request in [
+            json!({"call": "app.exit", "ref": 1}),
+            json!({"call": "app.exit", "ref": 1, "args": {}}),
+            json!({"call": "app.exit", "ref": 1, "args": {"code": null}}),
+        ] {
+            let (_, exits) = call_exiting(cx, request);
+            assert_eq!(exits, [(0, 1)]);
+        }
+    }
+
+    #[gpui_kit::test]
+    fn app_exit_with_a_bad_code_replies_an_error_and_stays(cx: &mut gpui_kit::TestAppContext) {
+        let (events, exits) = call_exiting(
+            cx,
+            json!({"call": "app.exit", "ref": 4, "args": {"code": "one"}}),
+        );
+        assert_eq!(exits, []);
+        assert_eq!(
+            events,
+            [json!({"type": "reply", "ref": 4, "result": null,
+                    "error": "app.exit: invalid type: string \"one\", expected i32"})]
+        );
+    }
+
     // macOS builds menu items through muda, which refuses to make one off
     // the main thread; a test runs on a worker thread.
     #[cfg(all(desktop, not(target_os = "macos")))]
@@ -680,8 +888,37 @@ pub(crate) mod fixture {
                     format!("invalid platform call: {error}"),
                 )
             }
+            // `cli.matches` for the process arguments `argv`, against the
+            // app's `cli` (null: it declares none): the plugin's own matches.
+            "reply_cli_matches" => {
+                let app = cli_app(a.get("cli").filter(|cli| !cli.is_null()).cloned());
+                let argv = a["argv"].as_array().unwrap();
+                set_args(argv.iter().map(|arg| arg.as_str().unwrap().to_owned()));
+                let request = Request {
+                    call: "cli.matches".into(),
+                    reference: a["ref"].as_u64().unwrap(),
+                    args: Value::Null,
+                };
+                reply_for(&request, cli_matches(app.handle()))
+            }
             _ => return None,
         })
+    }
+
+    /// A mock app whose `cli` is declared as `run` declares it, if it is.
+    pub(crate) fn cli_app(cli: Option<Value>) -> tauri::App<tauri::test::MockRuntime> {
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        let mut builder = tauri::test::mock_builder();
+        if let Some(cli) = cli {
+            context.config_mut().plugins.0.insert("cli".into(), cli);
+            builder = builder.plugin(tauri_plugin_cli::init());
+        }
+        builder.build(context).expect("a mock app")
+    }
+
+    /// The process arguments `cli.matches` parses, for this test.
+    pub(crate) fn set_args(args: impl IntoIterator<Item = String>) {
+        TEST_ARGS.with(|a| *a.borrow_mut() = args.into_iter().collect());
     }
 
     /// What `run` does with `request`'s arguments before it needs a window
@@ -698,7 +935,8 @@ pub(crate) mod fixture {
                 .map(|e| e.to_string())
         };
         match request.call.as_str() {
-            "clipboard.read" | "app.appearance" => None,
+            "clipboard.read" | "app.appearance" | "cli.matches" => None,
+            "app.exit" => exit_code(&request.args).err(),
             "clipboard.write" => text("text"),
             "app.open_url" => text("url"),
             "menu.set" => serde_json::from_value::<Vec<MenuSpec>>(request.args["menus"].clone())
@@ -710,7 +948,7 @@ pub(crate) mod fixture {
         }
     }
 
-    const CALLS: [&str; 10] = [
+    const CALLS: [&str; 12] = [
         "clipboard.read",
         "clipboard.write",
         "app.appearance",
@@ -721,6 +959,8 @@ pub(crate) mod fixture {
         "window.set_title",
         "window.set_bounds",
         "window.info",
+        "cli.matches",
+        "app.exit",
     ];
 
     fn calls_fixture() -> Vec<Value> {

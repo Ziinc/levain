@@ -24,5 +24,10 @@
   {"name": "call that is not a string", "raw": "{\"call\":5,\"ref\":14}", "reply": {"type": "reply", "ref": 14, "result": null, "error": "invalid platform call: invalid type: integer `5`, expected a string at line 1 column 9"}},
   {"name": "missing ref (nothing to answer)", "raw": "{\"call\":\"clipboard.read\",\"args\":{}}", "reply": null},
   {"name": "ref that is a string (nothing to answer)", "raw": "{\"call\":\"clipboard.read\",\"ref\":\"1\"}", "reply": null},
-  {"name": "not JSON (nothing to answer)", "raw": "not json", "reply": null}
+  {"name": "not JSON (nothing to answer)", "raw": "not json", "reply": null},
+  {"name": "cli.matches", "json": {"call": "cli.matches", "ref": 13, "args": {}}},
+  {"name": "app.exit with a code", "json": {"call": "app.exit", "ref": 14, "args": {"code": 2}}},
+  {"name": "app.exit without a code", "json": {"call": "app.exit", "ref": 15, "args": {}}},
+  {"name": "app.exit with a code that is not an integer", "json": {"call": "app.exit", "ref": 29, "args": {"code": "one"}}, "reply": {"type": "reply", "ref": 29, "result": null, "error": "app.exit: invalid type: string \"one\", expected i32"}},
+  {"name": "app.exit with a fractional code", "json": {"call": "app.exit", "ref": 30, "args": {"code": 1.5}}, "reply": {"type": "reply", "ref": 30, "result": null, "error": "app.exit: invalid type: floating point `1.5`, expected i32"}}
 ]

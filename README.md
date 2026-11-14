@@ -30,9 +30,13 @@ A `Runtime` is the one seam between levain and a language. It has two methods.
 
 - `locate(&self, &AppPaths) -> Result<App, String>` finds the app: next to the executable, in the bundle's
   resources (`AppPaths::resources`), or unpacked from the host library on
-  mobile (`levain::mobile::unpack`). It returns an `App`: `root`, `name` and
-  a `WindowConfig` (`title`, `width`, `height`; 480x360 by default).
-  `WindowConfig::from_app_json` reads the `window` key of an `app.json`.
+  mobile (`levain::mobile::unpack`). It returns an `App`: `root`, `name`, a
+  `WindowConfig` (`title`, `width`, `height`; 480x360 by default) and `cli`
+  (`Option<serde_json::Value>`, see [Command-line apps](#command-line-apps)).
+  `WindowConfig::from_app_json` reads the `window` key of an `app.json`;
+  `levain::cli_from_app_json` reads its `cli` key. On desktop `locate` runs
+  before Tauri is built, so `AppPaths::data` is `None` there; it is set on
+  phones, where `locate` runs inside Tauri's setup.
 - `start(&self, App, &'static HostApi) -> Result<(), String>` starts the app on its own thread and returns. From then on the
   runtime talks to the host only through `api`. It never touches GPUI.
 - If `locate` fails, window 0 shows "No app to run: ..." and `start` is not
@@ -176,6 +180,59 @@ null` and `"error": "<call>: <message>"`. An unknown call is an error reply.
 | `window.set_title` | `window`, `title` | `null` |
 | `window.set_bounds` | `window`, `x?`, `y?`, `width?`, `height?` | `null` |
 | `window.info` | `window` | `{title, x, y, width, height}`, or `null` for no such window |
+| `cli.matches` | | The parsed command line, as `tauri-plugin-cli` gives it (see [Command-line apps](#command-line-apps)). An error if the app declares no `cli` |
+| `app.exit` | `code?` (integer, default 0) | `null`, sent before the process exits with `code` |
+
+### Command-line apps
+
+An app can also be a command-line tool, built on Tauri's CLI plugin
+(`tauri-plugin-cli`). The app's own code decides, per run, whether to work
+headless (no window: do the work, print, exit with a status) or open windows.
+
+Declare the CLI in the app's `app.json` under `cli`, in the schema Tauri's
+CLI plugin takes under `plugins.cli` in `tauri.conf.json` (`description`,
+`args`, `subcommands`, ...), and return it as `App::cli`
+(`levain::cli_from_app_json(bytes)`):
+
+```json
+{"cli": {"description": "Adds numbers", "subcommands": {"sum": {"args": [
+  {"name": "a", "index": 1, "takesValue": true, "required": true},
+  {"name": "b", "index": 2, "takesValue": true, "required": true},
+  {"name": "json"}]}}}}
+```
+
+`levain::run` puts it in the Tauri context's plugin config and registers the
+plugin before the app is built. The app then calls:
+
+- `cli.matches`, with no args. The result is the plugin's matches:
+  `{"args": {"<name>": {"value": ..., "occurrences": n}}, "subcommand":
+  {"name": "sum", "matches": {...}} | null}`. `value` is `true`/`false` for a
+  flag, a string for an option or positional, an array for one that takes
+  several, `null` when absent. `--help` is a match, not an exit: `args.help.value`
+  is the help text. Arguments the CLI does not accept are an error reply
+  (`cli.matches: failed to parse arguments: ...`, with clap's message). An
+  app that declared no `cli` gets `cli.matches: the app declares no cli`.
+- `app.exit` with `{"code": n}` (default 0). The reply is sent first, then
+  the process exits with `n` through Tauri; anything the app printed must be
+  flushed by the app before it makes the call (the host flushes its own
+  stdout and stderr). A `code` that is not an integer is an error reply and
+  the process stays.
+
+Window 0 is not opened at startup when the app declares a `cli`: it opens,
+with the app's `title`, `width` and `height`, the first time the app renders
+to window 0 or calls `window.open` for it (whatever its args). Renders wait
+for it in the queue for windows not open yet, so none is lost. A headless
+run, which renders nothing, never creates a window. It must end itself with
+`app.exit`: with no window open, nothing else ends the process. An app that
+declares no `cli` opens window 0 at once, as ever, and the "No app to run"
+notice still appears when `locate` fails.
+
+Limits: desktop only. On Android and iOS the plugin is not built, `App::cli`
+is ignored, window 0 opens at once and `cli.matches` is the "declares no cli"
+error. A `cli` that does not fit the plugin's schema fails the host's
+startup. On Linux a headless run still needs a display (X or Wayland, or
+`xvfb-run`): Tauri initialises GTK at startup and fails without one, with
+"Failed to initialize GTK".
 
 ### Component sets
 
@@ -201,6 +258,7 @@ all of it.
 | --- | --- |
 | `patches.json` | `{name, old, new, patch}`: applying `patch` to `old` must give `new` |
 | `events.json` | `{name, build, args, json}`: the event `json` for each type in the table above |
+| `calls.json` | `{name, json}`: a platform call request; with `reply`, the request is invalid and `reply` is the answer (`raw` is text that is not JSON for a request) |
 | `components.json` | A component manifest, as `--manifest` prints it |
 
 levain's own tests run the first two against `patch.rs` and `events.rs`.
@@ -282,6 +340,7 @@ CI, under `xvfb-run`):
 ```sh
 cargo build -p levain-echo --features playwright
 cd e2e && npm install && npx playwright test
+npm run test:cli   # the headless path: `levain-echo sum 2 3`, no window
 ```
 
 ## Licence

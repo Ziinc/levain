@@ -357,7 +357,7 @@ fn a_new_keymap_replaces_the_old_and_an_unchanged_one_is_left_alone(cx: &mut Tes
     show(
         &view,
         cx,
-        r#"{"keymap": [{"keys": "ctrl-m", "action": "m", "context": "A &&"},
+        r#"{"root": null, "keymap": [{"keys": "ctrl-m", "action": "m", "context": "A &&"},
                        {"keys": "ctrl-n", "action": "n"}]}"#,
     );
     cx.simulate_keystrokes("ctrl-m ctrl-n");

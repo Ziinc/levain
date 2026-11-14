@@ -45,6 +45,11 @@ tauri = { version = "2.12", default-features = false, features = ["unstable", "w
 # Switch to a release once one is published.
 tauri-plugin-gpui = { git = "https://github.com/ziinc/tauri-gpui", features = ["mobile"] }
 
+# The app's own command line (`app.json`'s `cli`). Desktop only, as its docs
+# require: it does not build for Android or iOS.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-cli = "2"
+
 # The portal's colour scheme, read off the main thread (`portal.rs`). Both
 # are already in the tree, through rfd and async-io.
 [target.'cfg(target_os = "linux")'.dependencies]

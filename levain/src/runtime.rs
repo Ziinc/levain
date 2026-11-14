@@ -32,6 +32,12 @@ pub struct App {
     pub root: PathBuf,
     pub name: String,
     pub window: WindowConfig,
+    /// The app's command line, in the schema of Tauri's CLI plugin
+    /// (`plugins.cli` in `tauri.conf.json`): the `cli` of its `app.json`
+    /// ([`cli_from_app_json`]). When it is `Some`, window 0 is not opened at
+    /// startup: the app opens it by rendering to it, or runs headless.
+    /// Desktop only; phones ignore it.
+    pub cli: Option<serde_json::Value>,
 }
 
 /// The main window, from the app's `app.json`.
@@ -67,6 +73,20 @@ impl WindowConfig {
     }
 }
 
+/// The `cli` of an `app.json`, in the schema of Tauri's CLI plugin
+/// (`description`, `args`, `subcommands`, ...). `None` when it is missing,
+/// is not an object, or the file is malformed.
+pub fn cli_from_app_json(json: &[u8]) -> Option<serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    struct Config {
+        cli: serde_json::Value,
+    }
+    serde_json::from_slice::<Config>(json)
+        .ok()
+        .map(|config| config.cli)
+        .filter(serde_json::Value::is_object)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,5 +108,29 @@ mod tests {
     fn default_window_without_app_json() {
         assert_eq!(WindowConfig::from_app_json(b""), WindowConfig::default());
         assert_eq!(WindowConfig::from_app_json(b"{}"), WindowConfig::default());
+    }
+
+    #[test]
+    fn cli_from_app_json_is_the_cli_object() {
+        let json = br#"{"window": {"width": 320}, "cli": {"description": "Sums",
+            "subcommands": {"sum": {"args": [{"name": "a", "index": 1}]}}}}"#;
+        let cli = cli_from_app_json(json).expect("a cli");
+        assert_eq!(cli["description"], "Sums");
+        assert_eq!(cli["subcommands"]["sum"]["args"][0]["name"], "a");
+        // An empty object still declares a CLI (`--help`, `--version`).
+        assert_eq!(
+            cli_from_app_json(br#"{"cli": {}}"#),
+            Some(serde_json::json!({}))
+        );
+    }
+
+    #[test]
+    fn no_cli_unless_app_json_declares_an_object() {
+        assert_eq!(cli_from_app_json(b""), None);
+        assert_eq!(cli_from_app_json(b"{}"), None);
+        assert_eq!(cli_from_app_json(b"not json"), None);
+        assert_eq!(cli_from_app_json(br#"{"cli": null}"#), None);
+        assert_eq!(cli_from_app_json(br#"{"cli": "sum"}"#), None);
+        assert_eq!(cli_from_app_json(br#"{"cli": [1]}"#), None);
     }
 }
