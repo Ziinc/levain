@@ -27,11 +27,11 @@ pub fn watch(cx: &mut gpui::App) {
     let (tx, rx) = async_channel::unbounded::<WindowAppearance>();
     #[cfg(target_os = "linux")]
     let _ = std::thread::Builder::new()
-        .name("baguette-portal".into())
+        .name("levain-portal".into())
         .spawn(move || {
             if let Err(error) = futures_lite::future::block_on(follow(tx)) {
                 crate::log_line(&format!(
-                    "baguette: no colour scheme from the portal: {error}"
+                    "levain: no colour scheme from the portal: {error}"
                 ));
             }
         });

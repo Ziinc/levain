@@ -34,7 +34,7 @@ pub struct App {
     pub window: WindowConfig,
 }
 
-/// The main window, from the app's `app.json` (baguette's `baguette.json`).
+/// The main window, from the app's `app.json`.
 #[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 #[serde(default)]
 pub struct WindowConfig {

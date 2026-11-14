@@ -216,8 +216,8 @@ iOS build passes on only those). In `locate`, call:
 let root = levain::mobile::unpack(&paths.data.clone().ok_or("no data dir")?, |_| Ok(()))?;
 ```
 
-`unpack` extracts into `<data>/release-<hash>/` once per app build and
-removes earlier `release-*` directories. The closure runs on the unpacked
+`unpack` extracts into `<data>/app-<hash>/` once per app build and
+removes earlier `app-*` directories. The closure runs on the unpacked
 files before they are moved into place (on Android: linking native
 libraries). Without the archive it returns an error. On Android,
 `levain::mobile::native_lib_dir()` returns the library directory.

@@ -109,10 +109,10 @@ mod tests {
     #[test]
     fn reads_sha256sum_output() {
         let sums = parse_sha256s(
-            "# hosts\nABC  baguette_host-v1-x86_64-linux.tar.gz\ndef *liberlang.tar.gz\n\n",
+            "# hosts\nABC  example_host-v1-x86_64-linux.tar.gz\ndef *libexample.tar.gz\n\n",
         );
-        assert_eq!(sums["baguette_host-v1-x86_64-linux.tar.gz"], "abc");
-        assert_eq!(sums["liberlang.tar.gz"], "def");
+        assert_eq!(sums["example_host-v1-x86_64-linux.tar.gz"], "abc");
+        assert_eq!(sums["libexample.tar.gz"], "def");
         assert_eq!(sums.len(), 2);
     }
 

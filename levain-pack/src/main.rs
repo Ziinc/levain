@@ -1,5 +1,5 @@
 //! levain-pack: packages an app around a levain host. Language packages
-//! (baguette's `mix release`, chouquette, briochette) call it; it knows
+//! (the language packages' release tooling) call it; it knows
 //! nothing about the language.
 //!
 //! ```text

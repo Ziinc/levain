@@ -1,4 +1,4 @@
-//! The JSON view tree Elixir sends, and its rendering into GPUI elements.
+//! The JSON view tree the app sends, and its rendering into GPUI elements.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -19,7 +19,7 @@ use crate::bridge;
 use crate::list::{ListState, Segment};
 use crate::style::{self, Theme, Variant};
 
-/// What Elixir sends a window.
+/// What the app sends a window.
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub enum Message {
@@ -36,7 +36,7 @@ pub enum Message {
     Frame(Frame),
 }
 
-/// One render from Elixir: the theme tokens, the root node and, by list id,
+/// One render from the app: the theme tokens, the root node and, by list id,
 /// the rows of each `<list>` on screen.
 #[derive(Deserialize, Default)]
 pub struct Frame {
@@ -46,7 +46,7 @@ pub struct Frame {
     pub root: Option<Node>,
     #[serde(default)]
     pub lists: HashMap<String, Segment>,
-    /// The view's key bindings (`keymap` in Elixir).
+    /// The view's key bindings (`keymap` in the app).
     #[serde(default)]
     pub keymap: Vec<crate::keymap::Binding>,
 }
@@ -385,7 +385,7 @@ impl Renderer<'_, '_> {
     }
 
     /// A virtualized list (GPUI's `uniform_list`) of `rows` rows, drawn as
-    /// they scroll into view from the rows Elixir sends (`list.rs`).
+    /// they scroll into view from the rows the app sends (`list.rs`).
     fn list(&mut self, attrs: &BTreeMap<String, String>, path: &str) -> AnyElement {
         let key = attrs.get("id").cloned().unwrap_or_else(|| path.to_owned());
         self.seen.insert(format!("list:{key}"));
@@ -421,7 +421,7 @@ impl Renderer<'_, '_> {
     }
 
     /// A native text input (gpui-kit's), whose state lives in the root
-    /// between frames. Typed text stands until Elixir renders a different
+    /// between frames. Typed text stands until the app renders a different
     /// `value`, as in a browser.
     fn input(&mut self, attrs: &BTreeMap<String, String>, path: &str) -> AnyElement {
         self.seen.insert(path.to_owned());
@@ -493,7 +493,7 @@ impl Renderer<'_, '_> {
     }
 
     /// A native checkbox (gpui-kit's). It shows its new state at once;
-    /// Elixir's `checked` wins whenever it changes.
+    /// The app's `checked` wins whenever it changes.
     fn checkbox(&mut self, attrs: &BTreeMap<String, String>, path: &str) -> AnyElement {
         self.seen.insert(path.to_owned());
         let checked = attrs.contains_key("checked");
@@ -669,7 +669,7 @@ fn render_icon(attrs: &BTreeMap<String, String>, theme: &Theme, id: &str) -> Any
         static REPORTED: std::sync::Mutex<Option<HashSet<String>>> = std::sync::Mutex::new(None);
         let mut reported = REPORTED.lock().unwrap();
         if reported.get_or_insert_default().insert(name.to_owned()) {
-            crate::log_line(&format!("baguette: unknown icon `{name}`"));
+            crate::log_line(&format!("levain: unknown icon `{name}`"));
         }
     }
     gpui::ViewElement::new(Icon {
@@ -852,7 +852,7 @@ fn report_bounds(label: String) -> impl IntoElement {
             );
             let mut reported = REPORTED.lock().unwrap();
             if reported.get_or_insert_default().insert(label.clone(), at) != Some(at) {
-                crate::log_line(&format!("baguette: bounds {label} {} {}", at.0, at.1));
+                crate::log_line(&format!("levain: bounds {label} {} {}", at.0, at.1));
             }
         },
         |_, _, _, _| {},
@@ -880,10 +880,10 @@ pub fn text_of(nodes: &[Node]) -> String {
 /// A text input's state between frames.
 struct InputSlot {
     state: Entity<InputState>,
-    /// The `value` Elixir last rendered.
+    /// The `value` the app last rendered.
     rendered: String,
     placeholder: String,
-    /// Set when Baguette changed the text, so that change is not sent back.
+    /// Set when the host changed the text, so that change is not sent back.
     echo: bool,
     name: Option<String>,
     change: Option<String>,
@@ -895,7 +895,7 @@ struct InputSlot {
 #[derive(Default)]
 struct CheckSlot {
     checked: bool,
-    /// The `checked` Elixir last rendered.
+    /// The `checked` the app last rendered.
     rendered: bool,
     name: Option<String>,
     click: Option<String>,
@@ -909,7 +909,7 @@ struct FormInfo {
     submit: Option<String>,
 }
 
-/// The root view of a Baguette window: whatever Elixir last rendered, and
+/// The root view of a levain window: whatever the app last rendered, and
 /// the state of the native inputs in it.
 pub struct Root {
     pub window: u32,
@@ -989,7 +989,7 @@ impl Root {
     }
 
     /// Applies a patch to the frame shown. One that doesn't fit leaves it
-    /// part patched and asks Elixir for the whole frame; the patches before
+    /// part patched and asks the app for the whole frame; the patches before
     /// that frame arrives were diffed against another tree, and are dropped.
     pub fn patch(
         &mut self,
@@ -1008,7 +1008,7 @@ impl Root {
             return false;
         }
         if let Err(error) = crate::patch::apply(&mut self.frame.root, ops) {
-            crate::log_line(&format!("baguette: patch failed ({error}); resyncing"));
+            crate::log_line(&format!("levain: patch failed ({error}); resyncing"));
             bridge::emit(&crate::events::resync(self.window));
             self.desynced = true;
         }
@@ -1022,7 +1022,7 @@ impl Root {
         }
     }
 
-    /// Rows Elixir sent for one of the window's lists.
+    /// Rows the app sent for one of the window's lists.
     pub fn rows(&mut self, segment: Segment, cx: &mut gpui::Context<Self>) {
         if let Some(list) = self.lists.get_mut(&segment.id) {
             list.insert(segment);
@@ -1031,7 +1031,7 @@ impl Root {
     }
 
     /// The rows of list `key` in `range`, as `uniform_list` draws them. Rows
-    /// not here yet are blank until Elixir sends them, which this asks for.
+    /// not here yet are blank until the app sends them, which this asks for.
     fn list_rows(
         &mut self,
         key: &str,
@@ -1385,7 +1385,7 @@ impl gpui::Render for Root {
             .id("body")
             .size_full()
             .key_context(crate::keymap::window_context(window_id).as_str())
-            .on_action(move |action: &crate::keymap::ElixirAction, _, _| {
+            .on_action(move |action: &crate::keymap::RuntimeAction, _, _| {
                 bridge::emit(&crate::events::action(window_id, action.name.as_ref()));
             })
             .children(content);
@@ -1500,7 +1500,7 @@ mod tests {
         // The long names are not the wire format.
         assert!(serde_json::from_str::<Node>(r#"{"tag": "div"}"#).is_err());
         assert!(serde_json::from_str::<Node>(r#"{"a": {"x": "1"}}"#).is_err());
-        // Attribute values are strings, as Elixir stringifies them.
+        // Attribute values are strings, as the app stringifies them.
         assert!(serde_json::from_str::<Node>(r#"{"t": "div", "a": {"rows": 3}}"#).is_err());
         assert!(serde_json::from_str::<Node>("42").is_err());
     }
@@ -1702,7 +1702,7 @@ mod tests {
         assert_eq!(children[0], Node::Text("A".into()));
 
         // Until the frame arrives, patches (made against the lost tree) are
-        // dropped, and Elixir is not asked again.
+        // dropped, and the app is not asked again.
         let before = root.frame.root.clone();
         let next = ops(r#"[{"op": "replace", "at": [1], "node": "late"}]"#);
         assert!(!root.apply_patch(next, HashMap::new()));
@@ -1768,7 +1768,7 @@ mod tests {
             keystroke: gpui::Keystroke::parse(keys).unwrap(),
             input_preference: gpui::InputPreference::KeyBindings,
             action: action.map(|name| {
-                Box::new(crate::keymap::ElixirAction {
+                Box::new(crate::keymap::RuntimeAction {
                     name: name.to_string().into(),
                 }) as Box<dyn gpui::Action>
             }),

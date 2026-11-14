@@ -1,5 +1,5 @@
 //! The app's windows: each a Tauri window with a GPUI `Root` in it,
-//! numbered as Elixir numbers them (window 0 is the main one).
+//! numbered as the app numbers them (window 0 is the main one).
 
 use std::collections::HashMap;
 
@@ -9,7 +9,7 @@ use tauri_plugin_gpui::gpui::{self, AppContext, Global, WeakEntity};
 use crate::bridge::RenderMsg;
 use crate::view::{Frame, Message, Root};
 
-/// Each open window's root, and what Elixir sent windows not open yet.
+/// Each open window's root, and what the app sent windows not open yet.
 #[derive(Default)]
 struct Windows {
     roots: HashMap<u32, WeakEntity<Root>>,
@@ -26,7 +26,7 @@ pub fn label(id: u32) -> String {
     }
 }
 
-/// Opens window `id`, showing `frame` until Elixir renders it.
+/// Opens window `id`, showing `frame` until the app renders it.
 pub fn open(
     app: &tauri::AppHandle,
     id: u32,
@@ -114,7 +114,7 @@ const MAX_QUEUED: usize = 64;
 
 /// Keeps `json` for a window that isn't open. Only the latest frame matters,
 /// with what follows it; a patch or rows without a frame to follow, or one
-/// more than the queue holds, drops the queue and returns false: Elixir is
+/// more than the queue holds, drops the queue and returns false: The app is
 /// then asked for its whole frame instead.
 fn queue(queue: &mut Vec<Vec<u8>>, json: Vec<u8>) -> bool {
     if is_frame(&json) {
@@ -139,7 +139,7 @@ fn deliver(root: &gpui::Entity<Root>, json: &[u8], cx: &mut gpui::App) {
             root.update(cx, |root, cx| root.patch(patch, lists, cx))
         }
         Err(error) => {
-            let frame = crate::notice(format!("Invalid render from Elixir: {error}"));
+            let frame = crate::notice(format!("Invalid render: {error}"));
             root.update(cx, |root, cx| root.show(frame, cx))
         }
     }

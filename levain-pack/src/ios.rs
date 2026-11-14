@@ -15,11 +15,11 @@ const PACKAGE_LOCK: &str = include_str!("../templates/ios/package-lock.json.tmpl
 /// What differs between hosts.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IosCrate {
-    /// The host's package name, as in its `Cargo.toml` (`baguette_host`).
+    /// The host's package name, as in its `Cargo.toml` (`example_host`).
     pub host_crate: String,
-    /// The host's `[lib] name` (`baguette_host_lib`).
+    /// The host's `[lib] name` (`example_host_lib`).
     pub host_lib: String,
-    /// The host crate's directory, relative to the wrapper (`../baguette_host`).
+    /// The host crate's directory, relative to the wrapper (`../example_host`).
     pub host_path: String,
     /// Host features the wrapper forwards; `--feature`.
     pub features: Vec<String>,
@@ -137,10 +137,10 @@ pub fn write(spec: &IosCrate, out: &Path) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
 
-    /// baguette's hand-written `native/baguette_ios`.
-    fn baguette() -> IosCrate {
-        let mut c = IosCrate::new("baguette_host", "baguette_host_lib", "../baguette_host");
-        c.identifier = "dev.baguette.host".into();
+    /// A host and its iOS wrapper, with sample names.
+    fn example() -> IosCrate {
+        let mut c = IosCrate::new("example_host", "example_host_lib", "../example_host");
+        c.identifier = "dev.example.host".into();
         c.features = vec!["components-gpui-kit".into(), "playwright".into()];
         c.default_features = vec!["components-gpui-kit".into()];
         c
@@ -151,64 +151,64 @@ mod tests {
     }
 
     #[test]
-    fn renders_what_baguette_ios_has_today() {
-        let files = baguette().render().unwrap();
+    fn renders_what_example_ios_has_today() {
+        let files = example().render().unwrap();
         assert_eq!(
             file(&files, "src/lib.rs"),
             "//! The iOS app's static library: the host, whose `run` is the app's entry\n\
              //! point (`tauri::mobile_entry_point` exports it as `start_app`, which the\n\
              //! Xcode project's `main` calls).\n\n\
-             pub use baguette_host_lib::run;\n"
+             pub use example_host_lib::run;\n"
         );
         assert_eq!(
             file(&files, "package.json"),
-            "{\n  \"name\": \"baguette-ios\",\n  \"private\": true,\n  \"scripts\": {\n    \
+            "{\n  \"name\": \"example-ios\",\n  \"private\": true,\n  \"scripts\": {\n    \
              \"tauri\": \"tauri\"\n  },\n  \"devDependencies\": {\n    \
              \"@tauri-apps/cli\": \"^2.12.1\"\n  }\n}\n"
         );
         assert_eq!(
             file(&files, "tauri.conf.json"),
             "{\n  \"$schema\": \"https://schema.tauri.app/config/2\",\n  \
-             \"productName\": \"baguette\",\n  \"version\": \"0.1.0\",\n  \
-             \"identifier\": \"dev.baguette.host\",\n  \"build\": {\n    \
-             \"frontendDist\": \"../baguette_host/dist\"\n  },\n  \"app\": {\n    \
+             \"productName\": \"example\",\n  \"version\": \"0.1.0\",\n  \
+             \"identifier\": \"dev.example.host\",\n  \"build\": {\n    \
+             \"frontendDist\": \"../example_host/dist\"\n  },\n  \"app\": {\n    \
              \"windows\": [],\n    \"security\": { \"csp\": null }\n  },\n  \"bundle\": {\n    \
-             \"active\": true,\n    \"icon\": [\"../baguette_host/icons/icon.png\"],\n    \
+             \"active\": true,\n    \"icon\": [\"../example_host/icons/icon.png\"],\n    \
              \"iOS\": { \"minimumSystemVersion\": \"15.0\" }\n  }\n}\n"
         );
         let cargo = file(&files, "Cargo.toml");
         for line in [
-            "name = \"baguette_ios\"",
+            "name = \"example_ios\"",
             "publish = false",
-            "name = \"baguette_ios_lib\"",
+            "name = \"example_ios_lib\"",
             "crate-type = [\"staticlib\"]",
-            "baguette_host = { path = \"../baguette_host\", default-features = false }",
+            "example_host = { path = \"../example_host\", default-features = false }",
             "tauri = { version = \"2.12\", default-features = false }",
             "default = [\"components-gpui-kit\"]",
-            "components-gpui-kit = [\"baguette_host/components-gpui-kit\"]",
-            "playwright = [\"baguette_host/playwright\"]",
+            "components-gpui-kit = [\"example_host/components-gpui-kit\"]",
+            "playwright = [\"example_host/playwright\"]",
         ] {
             assert!(cargo.lines().any(|l| l == line), "{line} in\n{cargo}");
         }
         let lock = file(&files, "package-lock.json");
-        assert!(lock.contains("\"name\": \"baguette-ios\""));
+        assert!(lock.contains("\"name\": \"example-ios\""));
         assert!(lock.contains("\"lockfileVersion\": 3"));
         assert!(!lock.contains("{{"));
     }
 
     #[test]
     fn other_hosts_get_their_own_names() {
-        let mut c = IosCrate::new("chouquette_host", "chouquette_host", "../host");
+        let mut c = IosCrate::new("other_host", "other_host", "../host");
         c.identifier = "dev.example.app".into();
         let files = c.render().unwrap();
         let cargo = file(&files, "Cargo.toml");
-        assert!(cargo.contains("name = \"chouquette_ios_lib\""));
-        assert!(cargo.contains("chouquette_host = { path = \"../host\""));
+        assert!(cargo.contains("name = \"other_ios_lib\""));
+        assert!(cargo.contains("other_host = { path = \"../host\""));
         assert!(cargo.contains("default = []"));
-        assert!(file(&files, "src/lib.rs").contains("pub use chouquette_host::run;"));
-        assert!(file(&files, "tauri.conf.json").contains("\"productName\": \"chouquette\""));
+        assert!(file(&files, "src/lib.rs").contains("pub use other_host::run;"));
+        assert!(file(&files, "tauri.conf.json").contains("\"productName\": \"other\""));
         assert!(file(&files, "tauri.conf.json").contains("\"identifier\": \"dev.example.app\""));
-        assert!(file(&files, "package.json").contains("\"name\": \"chouquette-ios\""));
+        assert!(file(&files, "package.json").contains("\"name\": \"other-ios\""));
         for (_, text) in &files {
             assert!(!text.contains("{{"), "{text}");
         }
@@ -216,10 +216,10 @@ mod tests {
 
     #[test]
     fn rejects_values_that_would_break_the_files() {
-        let mut c = baguette();
+        let mut c = example();
         c.identifier = "a\"b".into();
         assert!(c.render().is_err());
-        let mut c = baguette();
+        let mut c = example();
         c.default_features = vec!["nope".into()];
         assert!(c.render().unwrap_err().contains("nope"));
     }
@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn writes_the_files() {
         let tmp = tempfile::tempdir().unwrap();
-        write(&baguette(), &tmp.path().join("ios")).unwrap();
+        write(&example(), &tmp.path().join("ios")).unwrap();
         assert!(tmp.path().join("ios/src/lib.rs").is_file());
         assert!(tmp.path().join("ios/package-lock.json").is_file());
     }

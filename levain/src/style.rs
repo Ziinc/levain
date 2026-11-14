@@ -10,7 +10,7 @@ use std::sync::Mutex;
 
 use tauri_plugin_gpui::gpui::{FontWeight, Hsla, Rgba, Styled, px, relative, rgb};
 
-/// Theme tokens sent by Elixir, by name.
+/// Theme tokens sent by the app, by name.
 pub type Theme = HashMap<String, String>;
 
 /// The state variants a class can be scoped to.
@@ -268,7 +268,7 @@ fn reported(class: &str) -> bool {
 fn unknown<S>(s: S, class: &str) -> S {
     let mut reported = REPORTED.lock().unwrap();
     if reported.get_or_insert_default().insert(class.to_owned()) {
-        eprintln!("baguette: unsupported class `{class}`");
+        eprintln!("levain: unsupported class `{class}`");
     }
     s
 }
@@ -334,7 +334,7 @@ mod tests {
         assert!(reported("overflow-sideways"));
     }
 
-    // `style_gen.rs`, from `mix baguette.styles`.
+    // `style_gen.rs`, regenerated from gpui's rustdoc.
     #[test]
     fn styled_methods_are_classes_too() {
         use crate::style_gen::refinement;

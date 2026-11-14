@@ -1,5 +1,4 @@
-//! Platform calls from Elixir (`Baguette.Clipboard`, `Baguette.Window`,
-//! `Baguette.Menu`, `Baguette.App`), run on the UI thread. GPUI does the
+//! Platform calls from the app (clipboard, window, menu and app calls), run on the UI thread. GPUI does the
 //! clipboard and appearance; Tauri, which is the platform under GPUI here,
 //! does windows, menus and opening URLs.
 
@@ -50,13 +49,13 @@ pub enum ItemSpec {
     },
 }
 
-/// Runs `json` and sends Elixir the reply: `result`, or `error` and a nil
+/// Runs `json` and sends the app the reply: `result`, or `error` and a nil
 /// result.
 pub fn handle(json: &[u8], app: &tauri::AppHandle, cx: &mut gpui::App) {
     let request = match parse(json) {
         Ok(request) => request,
         Err((error, reference)) => {
-            crate::log_line(&format!("baguette: invalid platform call: {error}"));
+            crate::log_line(&format!("levain: invalid platform call: {error}"));
             // Answer it if it has a ref, so its caller doesn't wait.
             if let Some(reference) = reference {
                 bridge::emit(&crate::events::reply_error(

@@ -1,5 +1,5 @@
 //! Virtualized lists (`<list rows phx-rows>`): the rows the host has of
-//! each, and which to ask Elixir for as they scroll into view.
+//! each, and which to ask the app for as they scroll into view.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -9,7 +9,7 @@ use tauri_plugin_gpui::gpui::UniformListScrollHandle;
 
 use crate::view::Node;
 
-/// Rows of one list from Elixir, starting at index `start`.
+/// Rows of one list from the app, starting at index `start`.
 #[derive(Deserialize, Default)]
 pub struct Segment {
     /// The list's id; frames key segments by it instead.
@@ -20,7 +20,7 @@ pub struct Segment {
 }
 
 /// A request for rows `start..end`, and the range on screen (with a
-/// screen's margin either side) that Elixir keeps fresh on each render.
+/// screen's margin either side) that the app keeps fresh on each render.
 #[derive(Debug, PartialEq)]
 pub struct Want {
     pub rows: Range<usize>,
@@ -77,7 +77,7 @@ impl ListState {
         })
     }
 
-    /// Rows Elixir sent, in reply to a request.
+    /// Rows the app sent, in reply to a request.
     pub fn insert(&mut self, segment: Segment) {
         let end = segment.start + segment.rows.len();
         if self

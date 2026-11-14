@@ -1,4 +1,4 @@
-//! Patches to the view tree (`Baguette.Patch`): what changed since the last
+//! Patches to the view tree (the language package's diff): what changed since the last
 //! frame, applied in place of a whole new tree.
 
 use std::collections::BTreeMap;
@@ -29,7 +29,7 @@ pub enum Op {
 }
 
 /// Applies `ops` in order. On an error the tree is part patched, and the
-/// host asks Elixir for the whole frame.
+/// host asks the app for the whole frame.
 pub fn apply(root: &mut Option<Node>, ops: Vec<Op>) -> Result<(), String> {
     for op in ops {
         match op {
@@ -81,7 +81,7 @@ mod tests {
         patch: Vec<Op>,
     }
 
-    // The same cases Elixir's diff is tested against (Baguette.PatchTest).
+    // The same cases the app's diff is tested against (the conformance fixtures).
     #[test]
     fn rebuilds_each_new_tree_from_the_old_one() {
         let cases: Vec<Case> =

@@ -1,14 +1,14 @@
 //! The C ABI between levain's host and a language runtime.
 //!
 //! The host and the runtime share one process. The host hands the runtime
-//! the address of its [`HostApi`] (baguette passes it to the BEAM on the
-//! command line, and its NIF reads it back), so neither side needs the
+//! the address of its [`HostApi`] (a language package passes it to its runtime, for
+//! instance on the command line, and the runtime reads it back), so neither side needs the
 //! other's symbols. Everything crossing the boundary is plain bytes (JSON).
 
 use std::ffi::c_void;
 
 /// Bumped whenever [`HostApi`] or [`EventSink`] changes shape, or the crate
-/// is renamed (3 was `baguette_abi`).
+/// is renamed (3 was an earlier crate name).
 pub const ABI_VERSION: u32 = 4;
 
 /// Called by the host, on its UI thread, for every UI event.

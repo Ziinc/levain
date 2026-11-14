@@ -1,6 +1,6 @@
 //! Native open and save dialogs for `phx-pick-file` and `phx-pick-save`.
 //!
-//! Test hook: with `BAGUETTE_PICK_FILE` set, every picker answers with that
+//! Test hook: with `LEVAIN_PICK_FILE` set, every picker answers with that
 //! path at once instead of opening a dialog, as end-to-end tests cannot drive
 //! the platform's dialogs.
 
@@ -54,16 +54,16 @@ impl Pick {
 
     /// Opens the dialog; a chosen path is sent to the view, a cancel is not.
     pub fn open(self) {
-        if let Some(path) = std::env::var_os("BAGUETTE_PICK_FILE") {
+        if let Some(path) = std::env::var_os("LEVAIN_PICK_FILE") {
             return self.send(path.to_string_lossy().into_owned());
         }
         #[cfg(mobile)]
-        crate::log_line("baguette: file pickers are not available on mobile yet");
+        crate::log_line("levain: file pickers are not available on mobile yet");
         #[cfg(desktop)]
         {
             use tauri_plugin_dialog::DialogExt;
             let Some(app) = APP.get() else {
-                return crate::log_line("baguette: no app handle for the file dialog");
+                return crate::log_line("levain: no app handle for the file dialog");
             };
             let mut dialog = app.dialog().file();
             if !self.accept.is_empty() {

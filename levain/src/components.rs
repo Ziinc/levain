@@ -1,10 +1,11 @@
-//! Native components registered with the host, and the manifest Elixir
-//! generates function components from (`Baguette.Components`).
+//! Native components registered with the host, and the manifest the app
+//! generates function components from (the language package's generated
+//! component functions).
 //!
 //! A component set is a list of [`Component`]s: a tag, the attributes and
 //! events it accepts, and a function that renders it from [`Props`]. Sets
 //! are compiled in by Cargo features and listed in [`sets`]; the renderer
-//! looks a tag up here before its built-in elements. `baguette_host
+//! looks a tag up here before its built-in elements. `<host>
 //! --manifest` prints every registered component as JSON.
 
 use std::collections::BTreeMap;
@@ -20,7 +21,7 @@ mod gpui_kit;
 /// Bumped whenever the manifest's shape changes.
 pub const MANIFEST_VERSION: u32 = 2;
 
-/// What an attribute holds. Values arrive from Elixir as strings.
+/// What an attribute holds. Values arrive from the app as strings.
 #[derive(Clone, Copy, Debug)]
 pub enum AttrType {
     /// On when present (and not `"false"`).
@@ -139,7 +140,7 @@ impl Versions {
     };
 }
 
-/// `set` as `Baguette.Components` reads it, with the versions it was built
+/// `set` as the language package's component generator reads it, with the versions it was built
 /// against and a hash of all of that.
 pub fn manifest(set: &Set, versions: Versions) -> Value {
     let components: Vec<Value> = set
@@ -193,19 +194,19 @@ fn hashes_of(sets: &[Set], versions: Versions) -> BTreeMap<String, String> {
         .collect()
 }
 
-/// How the sets Elixir was compiled against (name to hash) compare with the
+/// How the sets the app was compiled against (name to hash) compare with the
 /// host's.
 #[derive(Debug, Default, PartialEq)]
 pub struct Check {
     /// In both, with different hashes: the host refuses these.
     pub mismatched: Vec<String>,
-    /// Elixir's, missing from the host: their tags draw as plain `<div>`s.
+    /// The app's, missing from the host: their tags draw as plain `<div>`s.
     pub missing: Vec<String>,
 }
 
-pub fn check(host: &BTreeMap<String, String>, elixir: &BTreeMap<String, String>) -> Check {
+pub fn check(host: &BTreeMap<String, String>, runtime: &BTreeMap<String, String>) -> Check {
     let mut check = Check::default();
-    for (set, hash) in elixir {
+    for (set, hash) in runtime {
         match host.get(set) {
             Some(ours) if ours != hash => check.mismatched.push(set.clone()),
             Some(_) => {}
@@ -307,10 +308,10 @@ mod tests {
         assert!(find_in(KIT, "div").is_none());
     }
 
-    // The same manifest as Elixir's fixture (test/fixtures/components.json),
+    // The same manifest as the shared fixture (fixtures/components.json),
     // so the two sides agree on its shape.
     #[test]
-    fn writes_the_manifest_elixir_reads() {
+    fn writes_the_manifest_the_app_reads() {
         let fixture: Value =
             serde_json::from_str(include_str!("../../fixtures/components.json")).unwrap();
         assert_eq!(manifest(&KIT[0], TEST_VERSIONS), fixture);
@@ -339,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn checks_elixirs_sets_against_the_hosts() {
+    fn checks_the_apps_sets_against_the_hosts() {
         let map = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
             pairs
                 .iter()

@@ -1,5 +1,6 @@
-//! gpui-kit's stateless components, as `kit-*` tags. Elixir reaches them
-//! through `Baguette.Kit` (generated from `priv/components/gpui-kit.json`).
+//! gpui-kit's stateless components, as `kit-*` tags. The app reaches them
+//! through the language package's generated component functions (from
+//! `components/gpui-kit.json`).
 
 use gpui_kit::component::{
     Sizable, Size,
@@ -235,18 +236,19 @@ mod tests {
         assert!(SET.components.iter().all(|c| c.tag.starts_with("kit-")));
     }
 
-    // `mix baguette.components` writes this file from `baguette_host
-    // --manifest gpui-kit`; `Baguette.Kit` is generated from it.
+    // `components/gpui-kit.json` is written from `<host> --manifest gpui-kit`;
+    // the language packages generate their component functions from it.
     #[test]
     fn matches_the_committed_manifest() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../components/gpui-kit.json");
-        let committed = std::fs::read_to_string(path)
-            .unwrap_or_else(|e| panic!("{path}: {e}; run `mix baguette.components`"));
+        let committed = std::fs::read_to_string(path).unwrap_or_else(|e| {
+            panic!("{path}: {e}; regenerate it with `<host> --manifest gpui-kit`")
+        });
         let committed: Value = serde_json::from_str(&committed).unwrap();
         assert_eq!(
             super::super::manifest_of("gpui-kit").unwrap(),
             committed,
-            "out of date; run `mix baguette.components`"
+            "out of date; regenerate it with `<host> --manifest gpui-kit`"
         );
     }
 }
