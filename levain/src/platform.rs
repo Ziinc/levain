@@ -51,7 +51,12 @@ pub enum ItemSpec {
 
 /// Runs `json` and sends the app the reply: `result`, or `error` and a nil
 /// result.
-pub fn handle(json: &[u8], app: &tauri::AppHandle, cx: &mut gpui::App) {
+pub fn handle<R: tauri::Runtime>(
+    json: &[u8],
+    app: &tauri::AppHandle<R>,
+    open: OpenWindow,
+    cx: &mut gpui::App,
+) {
     let request = match parse(json) {
         Ok(request) => request,
         Err((error, reference)) => {
@@ -66,7 +71,7 @@ pub fn handle(json: &[u8], app: &tauri::AppHandle, cx: &mut gpui::App) {
             return;
         }
     };
-    bridge::emit(&reply_for(&request, run(&request, app, cx)));
+    bridge::emit(&reply_for(&request, run(&request, app, open, cx)));
 }
 
 /// The request in `json`; or why it isn't one, and its `ref` if it has one.
@@ -90,7 +95,16 @@ fn reply_for(request: &Request, outcome: Result<Value, String>) -> Value {
     }
 }
 
-fn run(request: &Request, app: &tauri::AppHandle, cx: &mut gpui::App) -> Result<Value, String> {
+/// Opens window `id` with a title and a size, showing the app's first frame.
+pub type OpenWindow<'a> =
+    &'a dyn Fn(u32, &str, (f64, f64)) -> Result<(), Box<dyn std::error::Error>>;
+
+fn run<R: tauri::Runtime>(
+    request: &Request,
+    app: &tauri::AppHandle<R>,
+    open: OpenWindow,
+    cx: &mut gpui::App,
+) -> Result<Value, String> {
     let args = || -> Result<WindowArgs, String> {
         serde_json::from_value(request.args.clone()).map_err(|e| e.to_string())
     };
@@ -128,8 +142,7 @@ fn run(request: &Request, app: &tauri::AppHandle, cx: &mut gpui::App) -> Result<
             let args = args()?;
             let title = args.title.unwrap_or_default();
             let size = (args.width.unwrap_or(800.), args.height.unwrap_or(600.));
-            crate::windows::open(app, args.window, &title, size, Default::default())
-                .map_err(|e| e.to_string())?;
+            open(args.window, &title, size).map_err(|e| e.to_string())?;
             Ok(Value::Null)
         }
         "window.close" => {
@@ -177,12 +190,12 @@ pub fn appearance(appearance: WindowAppearance) -> &'static str {
     }
 }
 
-fn window(app: &tauri::AppHandle, id: u32) -> Option<tauri::Window> {
+fn window<R: tauri::Runtime>(app: &tauri::AppHandle<R>, id: u32) -> Option<tauri::Window<R>> {
     app.get_window(&crate::windows::label(id))
 }
 
 /// Its title and bounds, in logical pixels.
-fn info(window: &tauri::Window) -> tauri::Result<Value> {
+fn info<R: tauri::Runtime>(window: &tauri::Window<R>) -> tauri::Result<Value> {
     let scale = window.scale_factor()?;
     let size = window.inner_size()?.to_logical::<f64>(scale);
     let position = window.outer_position()?.to_logical::<f64>(scale);
@@ -196,7 +209,10 @@ fn info(window: &tauri::Window) -> tauri::Result<Value> {
 }
 
 #[cfg(desktop)]
-fn set_menus(app: &tauri::AppHandle, menus: &[MenuSpec]) -> tauri::Result<()> {
+fn set_menus<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    menus: &[MenuSpec],
+) -> tauri::Result<()> {
     use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
     let mut bar = MenuBuilder::new(app);
     for menu in menus {
@@ -389,6 +405,244 @@ mod tests {
         assert_eq!(accelerator("fn-f1"), "Fn+F1");
         assert_eq!(accelerator("escape"), "Escape");
         assert_eq!(accelerator("secondary-shift--"), "CmdOrCtrl+Shift+-");
+    }
+}
+
+/// `handle` against Tauri's mock runtime and GPUI's test platform: the
+/// requests the app sends, and the replies it gets.
+#[cfg(test)]
+mod call_tests {
+    use super::*;
+    use crate::bridge::testing::{Harness, harness};
+    use std::cell::RefCell;
+
+    type Opened = RefCell<Vec<(u32, String, (f64, f64))>>;
+
+    /// Sends `request` and returns the one reply event.
+    fn call(
+        h: &Harness,
+        app: &tauri::App<tauri::test::MockRuntime>,
+        cx: &mut gpui_kit::TestAppContext,
+        opened: &Opened,
+        request: Value,
+    ) -> Value {
+        let open = |id: u32, title: &str, size| {
+            opened.borrow_mut().push((id, title.to_owned(), size));
+            // The window of a mock app, without GPUI in it.
+            crate::windows::build(app.handle(), id, title, size)
+                .map(drop)
+                .map_err(Into::into)
+        };
+        let json = serde_json::to_vec(&request).unwrap();
+        cx.update(|cx| handle(&json, app.handle(), &open, cx));
+        let mut events = h.events();
+        assert_eq!(events.len(), 1, "{events:?}");
+        events.remove(0)
+    }
+
+    fn setup() -> (Harness, tauri::App<tauri::test::MockRuntime>, Opened) {
+        let app = tauri::test::mock_builder()
+            .plugin(tauri_plugin_opener::init())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("a mock app");
+        (harness(), app, Opened::default())
+    }
+
+    #[gpui_kit::test]
+    fn the_clipboard_holds_what_was_written(cx: &mut gpui_kit::TestAppContext) {
+        let (h, app, opened) = setup();
+        let reply = |cx: &mut _, request| call(&h, &app, cx, &opened, request);
+        assert_eq!(
+            reply(cx, json!({"call": "clipboard.read", "ref": 1})),
+            json!({"type": "reply", "ref": 1, "result": null})
+        );
+        assert_eq!(
+            reply(
+                cx,
+                json!({"call": "clipboard.write", "ref": 2, "args": {"text": "hello"}})
+            ),
+            json!({"type": "reply", "ref": 2, "result": null})
+        );
+        assert_eq!(
+            reply(cx, json!({"call": "clipboard.read", "ref": 3})),
+            json!({"type": "reply", "ref": 3, "result": "hello"})
+        );
+        assert_eq!(
+            reply(cx, json!({"call": "clipboard.write", "ref": 4, "args": {}})),
+            json!({"type": "reply", "ref": 4, "result": null,
+                   "error": "clipboard.write: no `text`"})
+        );
+    }
+
+    #[gpui_kit::test]
+    fn the_appearance_is_light_or_dark(cx: &mut gpui_kit::TestAppContext) {
+        let (h, app, opened) = setup();
+        assert_eq!(
+            call(
+                &h,
+                &app,
+                cx,
+                &opened,
+                json!({"call": "app.appearance", "ref": 9})
+            ),
+            json!({"type": "reply", "ref": 9, "result": "light"})
+        );
+    }
+
+    #[gpui_kit::test]
+    fn calls_that_are_not_valid_are_answered_when_they_can_be(cx: &mut gpui_kit::TestAppContext) {
+        let (h, app, opened) = setup();
+        assert_eq!(
+            call(&h, &app, cx, &opened, json!({"call": "no.such", "ref": 5})),
+            json!({"type": "reply", "ref": 5, "result": null,
+                   "error": "no.such: no platform call `no.such`"})
+        );
+        // No `call`: answered, with its ref.
+        let reply = call(&h, &app, cx, &opened, json!({"ref": 6}));
+        assert_eq!(reply["ref"], 6);
+        assert!(
+            reply["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("invalid platform call")
+        );
+        // Not even a request: nothing to answer.
+        cx.update(|cx| handle(b"junk", app.handle(), &|_, _, _| Ok(()), cx));
+        assert!(h.events().is_empty());
+        // Opening a URL needs one.
+        assert_eq!(
+            call(
+                &h,
+                &app,
+                cx,
+                &opened,
+                json!({"call": "app.open_url", "ref": 7, "args": {}})
+            )["error"],
+            "app.open_url: no `url`"
+        );
+    }
+
+    #[gpui_kit::test]
+    fn windows_open_with_the_apps_title_and_size(cx: &mut gpui_kit::TestAppContext) {
+        let (h, app, opened) = setup();
+        let open = json!({"call": "window.open", "ref": 1,
+            "args": {"window": 2, "title": "Jobs", "width": 320.0, "height": 240.0}});
+        assert_eq!(
+            call(&h, &app, cx, &opened, open),
+            json!({"type": "reply", "ref": 1, "result": null})
+        );
+        // Unsized, it is 800x600.
+        call(
+            &h,
+            &app,
+            cx,
+            &opened,
+            json!({"call": "window.open", "ref": 2, "args": {"window": 3}}),
+        );
+        assert_eq!(
+            *opened.borrow(),
+            [
+                (2, "Jobs".to_owned(), (320., 240.)),
+                (3, String::new(), (800., 600.))
+            ]
+        );
+        assert!(app.get_window("window-2").is_some());
+        let bad = call(
+            &h,
+            &app,
+            cx,
+            &opened,
+            json!({"call": "window.open", "ref": 3, "args": {"title": 1}}),
+        );
+        assert!(bad["error"].as_str().unwrap().starts_with("window.open: "));
+    }
+
+    #[gpui_kit::test]
+    fn windows_are_closed_titled_resized_and_described(cx: &mut gpui_kit::TestAppContext) {
+        let (h, app, opened) = setup();
+        crate::windows::build(app.handle(), 1, "First", (300., 200.)).unwrap();
+        let mut n = 0;
+        let mut reply = |cx: &mut _, call_name: &str, args: Value| {
+            n += 1;
+            call(
+                &h,
+                &app,
+                cx,
+                &opened,
+                json!({"call": call_name, "ref": n, "args": args}),
+            )
+        };
+        // The mock runtime keeps no title or bounds: its window is a fixed one.
+        let info = reply(cx, "window.info", json!({"window": 1}));
+        let mut keys: Vec<_> = info["result"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        keys.sort();
+        assert_eq!(keys, ["height", "title", "width", "x", "y"]);
+        // Not there: no info, and no title to set.
+        assert_eq!(
+            reply(cx, "window.info", json!({"window": 9}))["result"],
+            Value::Null
+        );
+        assert_eq!(
+            reply(cx, "window.set_title", json!({"window": 9, "title": "x"}))["error"],
+            "window.set_title: no such window"
+        );
+        assert_eq!(
+            reply(cx, "window.set_bounds", json!({"window": 9, "width": 5}))["error"],
+            "window.set_bounds: no such window"
+        );
+        let titled = reply(
+            cx,
+            "window.set_title",
+            json!({"window": 1, "title": "Second"}),
+        );
+        assert_eq!(titled["result"], Value::Null);
+        let sized = reply(
+            cx,
+            "window.set_bounds",
+            json!({"window": 1, "width": 500.0, "height": 400.0, "x": 10.0, "y": 20.0}),
+        );
+        assert_eq!(sized["result"], Value::Null, "{sized}");
+        // Closing one that isn't there is not an error.
+        assert_eq!(
+            reply(cx, "window.close", json!({"window": 9}))["result"],
+            Value::Null
+        );
+        let closed = reply(cx, "window.close", json!({"window": 1}));
+        assert_eq!(closed["result"], Value::Null, "{closed}");
+    }
+
+    #[cfg(desktop)]
+    #[gpui_kit::test]
+    fn the_menu_bar_is_set_from_the_apps_menus(cx: &mut gpui_kit::TestAppContext) {
+        let (h, app, opened) = setup();
+        let menus = json!([{"title": "File", "items": [
+            {"id": "new", "label": "New", "keys": "secondary-n"},
+            {"separator": true},
+            {"id": "quit", "label": "Quit"}]}]);
+        let reply = call(
+            &h,
+            &app,
+            cx,
+            &opened,
+            json!({"call": "menu.set", "ref": 1, "args": {"menus": menus}}),
+        );
+        assert_eq!(reply, json!({"type": "reply", "ref": 1, "result": null}));
+        let bar = app.menu().expect("a menu bar");
+        let items = bar.items().unwrap();
+        assert_eq!(items.len(), 1);
+        let bad = call(
+            &h,
+            &app,
+            cx,
+            &opened,
+            json!({"call": "menu.set", "ref": 2, "args": {"menus": [{"title": 1}]}}),
+        );
+        assert!(bad["error"].as_str().unwrap().starts_with("menu.set: "));
     }
 }
 

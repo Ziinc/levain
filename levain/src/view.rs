@@ -1471,7 +1471,7 @@ mod tests {
             .collect()
     }
 
-    fn ops(json: &str) -> Vec<crate::patch::Op> {
+    pub(super) fn ops(json: &str) -> Vec<crate::patch::Op> {
         serde_json::from_str(json).unwrap()
     }
 
@@ -1852,6 +1852,11 @@ mod tests {
         );
     }
 }
+
+/// The view in a headless window: drawing, clicks, typing, lists, forms.
+#[cfg(test)]
+#[path = "view_tests.rs"]
+mod window_tests;
 
 /// Builds the events in `fixtures/events.json` from the inputs the view's own
 /// code takes (attributes, keystrokes, checkbox slots, list state).

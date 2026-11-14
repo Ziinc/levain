@@ -31,43 +31,69 @@ pub fn open(
     app: &tauri::AppHandle,
     id: u32,
     title: &str,
-    (width, height): (f64, f64),
+    size: (f64, f64),
     frame: Frame,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let window = build(app, id, title, size)?;
+    window.attach_gpui_view(Default::default(), move |window, cx| {
+        mount(id, frame, window, cx)
+    })?;
+    Ok(())
+}
+
+/// Window `id`'s Tauri window, without GPUI in it yet.
+pub fn build<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    id: u32,
+    title: &str,
+    (width, height): (f64, f64),
+) -> tauri::Result<tauri::Window<R>> {
     let window = tauri::WindowBuilder::new(app, label(id)).title(title);
     // A phone's window is its screen; iOS would take the size literally.
     #[cfg(desktop)]
     let window = window.inner_size(width, height);
     #[cfg(mobile)]
     let _ = (width, height);
-    let window = window.build()?;
-    // gpui-kit's Root hosts its components (focus, theme, popovers) and,
-    // for Playwright, observes what each frame paints.
-    window.attach_gpui_view(Default::default(), move |window, cx| {
-        let root = cx.new(|_| Root::new(id, frame));
-        // Window shortcuts (`phx-window-keydown`) hear every keystroke,
-        // wherever focus is, once GPUI has dispatched it.
-        let keys = root.downgrade();
-        cx.observe_keystrokes(move |event, _, cx| {
-            if let Some(root) = keys.upgrade() {
-                root.read(cx).on_keystroke(event);
-            }
-        })
-        .detach();
-        // GTK's theme changed; the portal's colour scheme, once known, wins.
-        let appearance = window.observe_window_appearance(move |_, cx| emit_appearance(id, cx));
-        root.update(cx, |root, _| root.keep(appearance));
-        let queued = {
-            let windows = cx.default_global::<Windows>();
-            windows.roots.insert(id, root.downgrade());
-            windows.queued.remove(&id).unwrap_or_default()
-        };
-        for json in queued {
-            deliver(&root, &json, cx);
+    window.build()
+}
+
+/// Puts window `id`'s view, showing `frame`, in `window` and registers it to
+/// receive the app's renders: gpui-kit's Root hosts its components (focus,
+/// theme, popovers) and, for Playwright, observes what each frame paints.
+pub(crate) fn mount(
+    id: u32,
+    frame: Frame,
+    window: &mut gpui::Window,
+    cx: &mut gpui::App,
+) -> gpui::Entity<gpui_kit::base::Root> {
+    let root = cx.new(|_| Root::new(id, frame));
+    // Window shortcuts (`phx-window-keydown`) hear every keystroke,
+    // wherever focus is, once GPUI has dispatched it.
+    let keys = root.downgrade();
+    cx.observe_keystrokes(move |event, _, cx| {
+        if let Some(root) = keys.upgrade() {
+            root.read(cx).on_keystroke(event);
         }
-        cx.new(|cx| gpui_kit::base::Root::new(root, window, cx))
-    })?;
-    Ok(())
+    })
+    .detach();
+    // GTK's theme changed; the portal's colour scheme, once known, wins.
+    let appearance = window.observe_window_appearance(move |_, cx| emit_appearance(id, cx));
+    root.update(cx, |root, _| root.keep(appearance));
+    let queued = {
+        let windows = cx.default_global::<Windows>();
+        windows.roots.insert(id, root.downgrade());
+        windows.queued.remove(&id).unwrap_or_default()
+    };
+    for json in queued {
+        deliver(&root, &json, cx);
+    }
+    cx.new(|cx| gpui_kit::base::Root::new(root, window, cx))
+}
+
+/// Window `id`'s view, if it is open.
+#[cfg(test)]
+pub(crate) fn root_of(id: u32, cx: &gpui::App) -> Option<gpui::Entity<Root>> {
+    cx.try_global::<Windows>()?.roots.get(&id)?.upgrade()
 }
 
 /// Tells window `id`'s view the app's appearance.
@@ -209,6 +235,110 @@ mod tests {
         let rows = br#"{"rows": {"id": "a", "start": 0, "rows": []}}"#;
         assert!(!queue(&mut q, rows.to_vec()));
         assert!(q.is_empty());
+    }
+
+    fn render(window: u32, json: &str) -> RenderMsg {
+        RenderMsg {
+            window,
+            json: json.as_bytes().to_vec(),
+        }
+    }
+
+    fn shown(window: u32, cx: &mut gpui_kit::TestAppContext) -> Option<crate::view::Node> {
+        cx.update(|cx| root_of(window, cx).map(|root| root.read(cx).frame.root.clone()))
+            .flatten()
+    }
+
+    #[gpui_kit::test]
+    fn renders_reach_the_open_windows_view(cx: &mut gpui_kit::TestAppContext) {
+        use crate::view::Node;
+        let h = crate::bridge::testing::harness();
+        crate::testing::window(cx, 0);
+        h.events();
+        let frame = r##"{"root": {"t": "div", "c": ["a", "b"]},
+            "lists": {}, "theme": {"primary": "#123456"}}"##;
+        cx.update(|cx| route(render(0, frame), cx));
+        let Some(Node::Element { children, .. }) = shown(0, cx) else {
+            panic!("no frame shown");
+        };
+        assert_eq!(children, [Node::Text("a".into()), Node::Text("b".into())]);
+        // A patch applies to it.
+        let patch = r#"{"patch": [{"op": "replace", "at": [1], "node": "B"}]}"#;
+        cx.update(|cx| route(render(0, patch), cx));
+        let Some(Node::Element { children, .. }) = shown(0, cx) else {
+            panic!("no frame shown");
+        };
+        assert_eq!(children[1], Node::Text("B".into()));
+        // Rows for a list the view doesn't have are dropped quietly.
+        let rows = r#"{"rows": {"id": "none", "start": 0, "rows": ["x"]}}"#;
+        cx.update(|cx| route(render(0, rows), cx));
+        assert!(h.events().is_empty());
+    }
+
+    #[gpui_kit::test]
+    fn a_render_that_is_not_a_message_shows_a_notice(cx: &mut gpui_kit::TestAppContext) {
+        let _h = crate::bridge::testing::harness();
+        crate::testing::window(cx, 0);
+        cx.update(|cx| route(render(0, "{nope"), cx));
+        let text = shown(0, cx)
+            .map(|node| crate::view::text_of(std::slice::from_ref(&node)))
+            .unwrap();
+        assert!(text.starts_with("Invalid render: "), "{text}");
+    }
+
+    #[gpui_kit::test]
+    fn what_a_window_not_open_is_sent_waits_for_it(cx: &mut gpui_kit::TestAppContext) {
+        use crate::view::Node;
+        let h = crate::bridge::testing::harness();
+        // A patch has no frame to follow: the app is asked for its frame.
+        cx.update(|cx| route(render(7, r#"{"patch": []}"#), cx));
+        assert_eq!(
+            h.events(),
+            [serde_json::json!({"type": "resync", "window": 7})]
+        );
+        // A frame, and a patch after it, are kept for the window.
+        cx.update(|cx| route(render(7, r#"{"root": {"t": "div", "c": ["a"]}}"#), cx));
+        let patch = r#"{"patch": [{"op": "replace", "at": [0], "node": "late"}]}"#;
+        cx.update(|cx| route(render(7, patch), cx));
+        assert!(h.events().is_empty());
+        assert_eq!(shown(7, cx), None);
+        // The window opens showing them.
+        crate::testing::window(cx, 7);
+        let Some(Node::Element { children, .. }) = shown(7, cx) else {
+            panic!("the queued frame was not shown");
+        };
+        assert_eq!(children, [Node::Text("late".into())]);
+        // Closed again, the next render finds no view and asks for a frame.
+        let window = cx.update(|cx| cx.windows()[0]);
+        cx.update_window(window, |_, window, _| window.remove_window())
+            .unwrap();
+        h.events();
+        cx.update(|cx| route(render(7, r#"{"patch": []}"#), cx));
+        assert_eq!(
+            h.events(),
+            [serde_json::json!({"type": "resync", "window": 7})]
+        );
+    }
+
+    #[gpui_kit::test]
+    fn windows_tell_the_app_their_appearance(cx: &mut gpui_kit::TestAppContext) {
+        let h = crate::bridge::testing::harness();
+        crate::testing::window(cx, 2);
+        assert_eq!(
+            h.events(),
+            [serde_json::json!({"type": "appearance", "window": 2, "appearance": "light"})]
+        );
+        // The app is told again, of every window, when the portal's scheme changes.
+        crate::testing::window(cx, 3);
+        h.events();
+        cx.update(appearance_changed);
+        let mut told: Vec<u64> = h
+            .events()
+            .iter()
+            .map(|e| e["window"].as_u64().unwrap())
+            .collect();
+        told.sort();
+        assert_eq!(told, [2, 3]);
     }
 
     #[test]

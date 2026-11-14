@@ -26,6 +26,8 @@ mod portal;
 mod runtime;
 mod style;
 mod style_gen;
+#[cfg(test)]
+mod testing;
 mod view;
 mod windows;
 
@@ -95,7 +97,7 @@ pub fn run<R: Runtime>(runtime: R, context: tauri::Context<tauri::Wry>) {
             };
             let located = runtime.locate(&paths);
             let handle = app.handle().clone();
-            let bridge::Inbox { renders, calls } = inbox;
+            let handle2 = handle.clone();
             tauri_plugin_gpui::init_with(
                 app,
                 tauri_plugin_gpui::GpuiConfig::new()
@@ -103,27 +105,11 @@ pub fn run<R: Runtime>(runtime: R, context: tauri::Context<tauri::Wry>) {
                     // and every lucide icon, for `<icon name="...">`.
                     .assets(gpui_kit::assets::AllAssets)
                     .on_launch(move |cx| {
-                        // gpui-kit's components: text inputs and checkboxes.
-                        gpui_kit::init(cx);
+                        let open = move |id, title: &str, size| {
+                            windows::open(&handle, id, title, size, Frame::default())
+                        };
                         portal::watch(cx);
-                        #[cfg(feature = "playwright")]
-                        playwright::start(cx);
-                        cx.spawn(async move |cx| {
-                            let mut first = true;
-                            while let Ok(msg) = renders.recv().await {
-                                if std::mem::take(&mut first) {
-                                    log_line("levain: first frame");
-                                }
-                                cx.update(|cx| windows::route(msg, cx));
-                            }
-                        })
-                        .detach();
-                        cx.spawn(async move |cx| {
-                            while let Ok(json) = calls.recv().await {
-                                cx.update(|cx| platform::handle(&json, &handle, cx));
-                            }
-                        })
-                        .detach();
+                        launch(cx, inbox, handle2, open)
                     }),
             )?;
             let (title, size, frame) = window_zero(&located);
@@ -136,6 +122,38 @@ pub fn run<R: Runtime>(runtime: R, context: tauri::Context<tauri::Wry>) {
         })
         .run(context)
         .expect("error while running the levain host");
+}
+
+/// Starts GPUI's side of the host once its app is up: gpui-kit's components
+/// and the loops that show the app's renders and
+/// run its platform calls on the UI thread.
+fn launch<R: tauri::Runtime>(
+    cx: &mut tauri_plugin_gpui::gpui::App,
+    inbox: bridge::Inbox,
+    app: tauri::AppHandle<R>,
+    open: impl Fn(u32, &str, (f64, f64)) -> Result<(), Box<dyn std::error::Error>> + 'static,
+) {
+    // gpui-kit's components: text inputs and checkboxes.
+    gpui_kit::init(cx);
+    #[cfg(feature = "playwright")]
+    playwright::start(cx);
+    let bridge::Inbox { renders, calls } = inbox;
+    cx.spawn(async move |cx| {
+        let mut first = true;
+        while let Ok(msg) = renders.recv().await {
+            if std::mem::take(&mut first) {
+                log_line("levain: first frame");
+            }
+            cx.update(|cx| windows::route(msg, cx));
+        }
+    })
+    .detach();
+    cx.spawn(async move |cx| {
+        while let Ok(json) = calls.recv().await {
+            cx.update(|cx| platform::handle(&json, &app, &open, cx));
+        }
+    })
+    .detach();
 }
 
 /// Window 0's title, size and first frame: the app's, or a notice of why
@@ -207,6 +225,47 @@ mod tests {
             manifest_arg(&args(&["host", "--manifest", "nope"]))
                 .unwrap()
                 .is_err()
+        );
+    }
+
+    #[gpui_kit::test]
+    fn launching_shows_the_apps_renders_and_runs_its_calls(cx: &mut gpui_kit::TestAppContext) {
+        use crate::view::Node;
+        let h = bridge::testing::harness();
+        let app = tauri::test::mock_app();
+        crate::testing::window(cx, 0);
+        h.events();
+        let inbox = bridge::Inbox {
+            renders: h.inbox.renders.clone(),
+            calls: h.inbox.calls.clone(),
+        };
+        let opened = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let log = opened.clone();
+        cx.update(|cx| {
+            launch(
+                cx,
+                inbox,
+                app.handle().clone(),
+                move |id, title: &str, size| {
+                    log.borrow_mut().push((id, title.to_owned(), size));
+                    Ok(())
+                },
+            )
+        });
+        // The app renders window 0 and asks for window 4.
+        let ctx = h.api.ctx;
+        let frame = br#"{"root": "from the app"}"#;
+        (h.api.render)(ctx, 0, frame.as_ptr(), frame.len());
+        let call = br#"{"call": "window.open", "ref": 3, "args": {"window": 4, "title": "Four"}}"#;
+        (h.api.call)(ctx, call.as_ptr(), call.len());
+        cx.run_until_parked();
+        let shown =
+            cx.update(|cx| windows::root_of(0, cx).map(|root| root.read(cx).frame.root.clone()));
+        assert_eq!(shown, Some(Some(Node::Text("from the app".into()))));
+        assert_eq!(*opened.borrow(), [(4, "Four".to_owned(), (800., 600.))]);
+        assert_eq!(
+            h.events().last(),
+            Some(&serde_json::json!({"type": "reply", "ref": 3, "result": null}))
         );
     }
 

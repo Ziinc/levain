@@ -150,6 +150,15 @@ mod tests {
         assert_eq!(prepared, 1);
     }
 
+    #[cfg(not(levain_embedded_app))]
+    #[test]
+    fn a_host_built_without_an_app_says_so_and_unpacks_nothing() {
+        let data = tempfile::tempdir().unwrap();
+        let error = unpack(data.path(), |_| panic!("nothing to prepare")).unwrap_err();
+        assert!(error.contains("LEVAIN_APP_ARCHIVE"), "{error}");
+        assert_eq!(std::fs::read_dir(data.path()).unwrap().count(), 0);
+    }
+
     #[test]
     fn a_failed_prepare_leaves_no_app() {
         let data = tempfile::tempdir().unwrap();

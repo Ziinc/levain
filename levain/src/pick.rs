@@ -16,6 +16,41 @@ pub fn install(app: tauri::AppHandle) {
     let _ = APP.set(app);
 }
 
+/// The path every picker answers with instead of opening a dialog, if the
+/// test hook is set.
+fn forced() -> Option<std::ffi::OsString> {
+    #[cfg(test)]
+    if let Some(path) = hook::get() {
+        return Some(path.into());
+    }
+    std::env::var_os("LEVAIN_PICK_FILE")
+}
+
+/// `LEVAIN_PICK_FILE` for tests, without changing the process's environment
+/// (which other threads read).
+#[cfg(test)]
+pub(crate) mod hook {
+    static PATH: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+    pub(crate) fn get() -> Option<String> {
+        PATH.lock().unwrap().clone()
+    }
+
+    /// Answers every picker with `path` until the guard is dropped.
+    pub(crate) fn set(path: &str) -> Guard {
+        *PATH.lock().unwrap() = Some(path.to_owned());
+        Guard
+    }
+
+    pub(crate) struct Guard;
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            *PATH.lock().unwrap() = None;
+        }
+    }
+}
+
 /// A picker element's binding: what to send, and how to filter.
 pub struct Pick {
     pub window: u32,
@@ -54,7 +89,7 @@ impl Pick {
 
     /// Opens the dialog; a chosen path is sent to the view, a cancel is not.
     pub fn open(self) {
-        if let Some(path) = std::env::var_os("LEVAIN_PICK_FILE") {
+        if let Some(path) = forced() {
             return self.send(path.to_string_lossy().into_owned());
         }
         #[cfg(mobile)]
@@ -182,6 +217,26 @@ mod tests {
                 "values": {"id": "7", "path": "/tmp/a.csv"},
             })]
         );
+    }
+
+    #[test]
+    fn a_picker_answers_with_the_hooked_path_or_logs_that_it_cannot_open() {
+        let h = harness();
+        let pick = || Pick::from_attrs(1, &attrs(&[("phx-pick-save", "saved")])).unwrap();
+        {
+            let _hook = hook::set("/tmp/answer.txt");
+            pick().open();
+        }
+        assert_eq!(
+            h.events(),
+            [json!({"type": "pick", "window": 1, "event": "saved",
+                    "values": {"path": "/tmp/answer.txt"}})]
+        );
+        // With no hook and no app to open a dialog from, nothing is sent.
+        if std::env::var_os("LEVAIN_PICK_FILE").is_none() {
+            pick().open();
+            assert!(h.events().is_empty());
+        }
     }
 
     #[test]

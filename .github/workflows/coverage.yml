@@ -9,7 +9,7 @@ env:
   CARGO_TERM_COLOR: always
   # Lines covered, in percent, below which the job fails. Raise it as tests
   # are added; never lower it to get a change through.
-  MIN_LINE_COVERAGE: 25
+  MIN_LINE_COVERAGE: 80
   # levain/src/style_gen.rs is generated (from gpui's rustdoc).
   IGNORE: levain/src/style_gen\.rs
 

@@ -62,6 +62,11 @@ flate2 = "1"
 tar = "0.4"
 
 [dev-dependencies]
+# GPUI's headless test platform (`TestAppContext`, `#[gpui_kit::test]`), and
+# Tauri's mock runtime, so windows, platform calls and inputs run in tests
+# without a display.
+gpui-kit = { version = "=0.7.3", default-features = false, features = ["component", "assets", "test-support"] }
+tauri = { version = "2.12", default-features = false, features = ["test"] }
 flate2 = "1"
 tar = "0.4"
 tempfile = "3"

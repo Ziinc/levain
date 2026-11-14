@@ -187,9 +187,26 @@ pub fn path(d: &str) -> Vec<Segment> {
     segments
 }
 
+/// One thing to put on screen.
+pub enum Draw {
+    Quad(gpui::PaintQuad),
+    Path(gpui::Path<Pixels>, Hsla),
+}
+
 /// Paints `shapes` with `origin` as their (0, 0).
 pub fn paint(shapes: &[Shape], origin: Point<Pixels>, window: &mut gpui::Window) {
+    for draw in commands(shapes, origin) {
+        match draw {
+            Draw::Quad(quad) => window.paint_quad(quad),
+            Draw::Path(path, color) => window.paint_path(path, color),
+        }
+    }
+}
+
+/// What painting `shapes` draws, in order, with `origin` as their (0, 0).
+pub fn commands(shapes: &[Shape], origin: Point<Pixels>) -> Vec<Draw> {
     let at = |x: f32, y: f32| origin + point(px(x), px(y));
+    let mut draws = Vec::new();
     for shape in shapes {
         match &shape.geometry {
             Geometry::Rect {
@@ -198,9 +215,9 @@ pub fn paint(shapes: &[Shape], origin: Point<Pixels>, window: &mut gpui::Window)
                 width,
                 height,
                 radius,
-            } => quad(shape, at(*x, *y), *width, *height, *radius, window),
+            } => draws.push(quad(shape, at(*x, *y), *width, *height, *radius)),
             Geometry::Circle { cx, cy, r } => {
-                quad(shape, at(cx - r, cy - r), r * 2., r * 2., *r, window)
+                draws.push(quad(shape, at(cx - r, cy - r), r * 2., r * 2., *r))
             }
             Geometry::Path(segments) => {
                 let closed = segments.contains(&Segment::Close);
@@ -208,29 +225,23 @@ pub fn paint(shapes: &[Shape], origin: Point<Pixels>, window: &mut gpui::Window)
                     let mut builder = gpui::PathBuilder::fill();
                     trace(&mut builder, segments, &at);
                     if let Ok(path) = builder.build() {
-                        window.paint_path(path, fill);
+                        draws.push(Draw::Path(path, fill));
                     }
                 }
                 if let Some(stroke) = shape.stroke {
                     let mut builder = gpui::PathBuilder::stroke(px(shape.stroke_width));
                     trace(&mut builder, segments, &at);
                     if let Ok(path) = builder.build() {
-                        window.paint_path(path, stroke);
+                        draws.push(Draw::Path(path, stroke));
                     }
                 }
             }
         }
     }
+    draws
 }
 
-fn quad(
-    shape: &Shape,
-    origin: Point<Pixels>,
-    width: f32,
-    height: f32,
-    radius: f32,
-    window: &mut gpui::Window,
-) {
+fn quad(shape: &Shape, origin: Point<Pixels>, width: f32, height: f32, radius: f32) -> Draw {
     let bounds = gpui::Bounds::new(origin, gpui::size(px(width), px(height)));
     let fill = shape.fill.unwrap_or(gpui::transparent_black());
     let mut quad = gpui::fill(bounds, fill).corner_radii(px(radius));
@@ -239,7 +250,7 @@ fn quad(
             .border_widths(px(shape.stroke_width))
             .border_color(stroke);
     }
-    window.paint_quad(quad);
+    Draw::Quad(quad)
 }
 
 fn trace(
@@ -483,5 +494,119 @@ mod tests {
         );
         assert_eq!(path(""), vec![]);
         assert_eq!(path("   "), vec![]);
+    }
+
+    fn drawn(children: &[Node], origin: (f32, f32)) -> Vec<Draw> {
+        let theme: Theme = [("primary".to_string(), "#ff0000".to_string())].into();
+        commands(&shapes(children, &theme), point(px(origin.0), px(origin.1)))
+    }
+
+    fn red() -> Hsla {
+        Hsla::from(gpui::rgb(0xff0000))
+    }
+
+    #[test]
+    fn a_rect_is_a_quad_from_the_origin() {
+        let draws = drawn(
+            &[el(
+                "rect",
+                &[
+                    ("x", "1"),
+                    ("y", "2"),
+                    ("width", "30"),
+                    ("height", "40"),
+                    ("rx", "5"),
+                    ("class", "fill-primary stroke-primary"),
+                    ("stroke-width", "2"),
+                ],
+            )],
+            (100., 200.),
+        );
+        let [Draw::Quad(quad)] = &draws[..] else {
+            panic!("{} draws", draws.len());
+        };
+        assert_eq!(quad.bounds.origin, point(px(101.), px(202.)));
+        assert_eq!(quad.bounds.size, gpui::size(px(30.), px(40.)));
+        assert_eq!(quad.corner_radii, gpui::Corners::all(px(5.)));
+        assert_eq!(quad.border_widths, gpui::Edges::all(px(2.)));
+        assert_eq!(quad.border_color, red());
+    }
+
+    #[test]
+    fn a_circle_is_a_round_quad_centred_on_its_point() {
+        let draws = drawn(
+            &[el("circle", &[("cx", "10"), ("cy", "10"), ("r", "4")])],
+            (0., 0.),
+        );
+        let [Draw::Quad(quad)] = &draws[..] else {
+            panic!("{} draws", draws.len());
+        };
+        assert_eq!(quad.bounds.origin, point(px(6.), px(6.)));
+        assert_eq!(quad.bounds.size, gpui::size(px(8.), px(8.)));
+        assert_eq!(quad.corner_radii, gpui::Corners::all(px(4.)));
+        // No class: filled black, with no border.
+        assert_eq!(quad.border_widths, gpui::Edges::all(px(0.)));
+    }
+
+    #[test]
+    fn a_closed_path_is_filled_then_stroked_and_a_line_only_stroked() {
+        let draws = drawn(
+            &[
+                el(
+                    "path",
+                    &[
+                        ("d", "M 0 0 L 10 0 L 10 10 Z"),
+                        ("class", "fill-primary stroke-primary"),
+                    ],
+                ),
+                el(
+                    "line",
+                    &[("x2", "20"), ("y2", "5"), ("class", "stroke-primary")],
+                ),
+                el("polyline", &[("points", "0,0 5,5 10,0")]),
+            ],
+            (50., 50.),
+        );
+        let paths: Vec<(&gpui::Path<Pixels>, Hsla)> = draws
+            .iter()
+            .map(|draw| match draw {
+                Draw::Path(path, color) => (path, *color),
+                Draw::Quad(_) => panic!("a path is not a quad"),
+            })
+            .collect();
+        // The fill, the stroke, the line and the polyline (black, by default).
+        assert_eq!(paths.len(), 4);
+        assert_eq!(paths[0].1, red());
+        assert_eq!(paths[1].1, red());
+        assert_eq!(paths[2].1, red());
+        assert_eq!(paths[3].1, gpui::black());
+        // The fill covers the triangle, from the origin.
+        assert_eq!(paths[0].0.bounds.origin, point(px(50.), px(50.)));
+        assert_eq!(paths[0].0.bounds.size, gpui::size(px(10.), px(10.)));
+        // The stroke of the line is as wide as the line is long (and a hair more).
+        assert!(paths[2].0.bounds.size.width >= px(20.));
+    }
+
+    #[test]
+    fn curves_are_traced_through_their_control_points() {
+        let draws = drawn(
+            &[
+                el(
+                    "path",
+                    &[
+                        ("d", "M 0 0 C 0 20 20 20 20 0 Q 30 -10 40 0"),
+                        ("class", "stroke-primary"),
+                    ],
+                ),
+                el("circle", &[("r", "0")]),
+            ],
+            (0., 0.),
+        );
+        let Draw::Path(path, _) = &draws[0] else {
+            panic!("not a path");
+        };
+        assert!(path.bounds.size.width >= px(40.), "{:?}", path.bounds);
+        assert!(path.bounds.size.height > px(0.));
+        assert!(matches!(draws[1], Draw::Quad(_)));
     }
 }

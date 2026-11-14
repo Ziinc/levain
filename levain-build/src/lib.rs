@@ -139,6 +139,17 @@ mod tests {
     }
 
     #[test]
+    fn an_unset_variable_is_none_under_both_names() {
+        assert_eq!(env_var("LEVAIN_BUILD_TEST_SURELY_UNSET"), None);
+    }
+
+    #[test]
+    fn a_variable_that_is_set_is_read() {
+        // PATH is set wherever Cargo runs.
+        assert_eq!(env_var("PATH"), std::env::var_os("PATH"));
+    }
+
+    #[test]
     fn both_names_are_watched() {
         assert_eq!(
             rerun_directives("LEVAIN_APP_ARCHIVE"),
