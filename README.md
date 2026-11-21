@@ -170,6 +170,7 @@ event has `type`; `window` is the window number.
 | `open` | `urls`: the app was opened with them (deep links; files on macOS) |
 | `tray` | `event`: `click` or `double-click` on the tray icon |
 | `shortcut` | `keys`: a global shortcut, as registered, was pressed |
+| `instance` | `args`, `cwd`: the app was started again while running, with `single_instance` (window 0 is focused; the new process exits) |
 | `reply` | `ref`, `result`, and `error` on failure |
 
 ### Platform calls
@@ -213,6 +214,9 @@ null` and `"error": "<call>: <message>"`. An unknown call is an error reply.
 | `haptics.selection` | | `null` |
 | `location.current` | `high_accuracy?` | `{latitude, longitude, accuracy, altitude, speed, heading, timestamp}`. Phones, with the host's `geolocation` feature |
 | `location.permission`, `location.request_permission` | | `granted`, `denied`, `prompt` or `promptWithRationale` |
+| `update.check` | | `null` for no update, else `{version, current_version, date, notes}`. Desktop, with `updater` |
+| `update.install` | | As `update.check`, once the update is downloaded and installed |
+| `app.restart` | | `null`, sent before the app restarts (after an update) |
 | `cli.matches` | | The parsed command line, as `tauri-plugin-cli` gives it (see [Command-line apps](#command-line-apps)). An error if the app declares no `cli` |
 | `app.exit` | `code?` (integer, default 0) | `null`, sent before the process exits with `code` |
 
@@ -266,6 +270,28 @@ error. A `cli` that does not fit the plugin's schema fails the host's
 startup. On Linux a headless run still needs a display (X or Wayland, or
 `xvfb-run`): Tauri initialises GTK at startup and fails without one, with
 "Failed to initialize GTK".
+
+### Deep links, one instance, updates
+
+On desktop, an app's `app.json` can also ask for these, each in the config
+its Tauri plugin takes:
+
+```json
+{"single_instance": true,
+ "deep_link": {"desktop": {"schemes": ["jobs"]}},
+ "updater": {"pubkey": "<minisign public key>", "endpoints": ["https://example.com/{{target}}/{{current_version}}"]}}
+```
+
+- `single_instance`: a second start sends the running app an `instance`
+  event and exits.
+- `deep_link`: `jobs://...` URLs reach the app as `open` events. On Linux
+  and Windows the schemes are registered at startup.
+- `updater`: `update.check` and `update.install`. Releases are signed with
+  the developer's own key (`TAURI_SIGNING_PRIVATE_KEY` and
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` when bundling); levain holds none.
+
+On phones, URL schemes are declared in the app's project and arrive as
+`open` events too; updates come from the app stores.
 
 ### Component sets
 

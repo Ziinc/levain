@@ -93,10 +93,17 @@ fn handle_with<R: tauri::Runtime>(
     if crate::device::handles(&request.call) {
         return crate::device::handle(request, app);
     }
+    if crate::extras::handles(&request.call) {
+        return crate::extras::handle(request, app);
+    }
     let outcome = run(&request, app, open, cx);
     let exiting = (request.call == "app.exit" && outcome.is_ok())
         .then(|| exit_code(&request.args).unwrap_or(0));
+    let restarting = request.call == "app.restart";
     bridge::emit(&reply_for(&request, outcome));
+    if restarting {
+        app.restart();
+    }
     if let Some(code) = exiting {
         // Nothing the app printed may be lost with the process.
         use std::io::Write;
@@ -220,6 +227,10 @@ fn run<R: tauri::Runtime>(
         }
         "cli.matches" => cli_matches(app),
         "app.exit" => exit_code(&request.args).map(|_| Value::Null),
+        "app.restart" => {
+            // After the reply is sent, as `app.exit` does.
+            Ok(Value::Null)
+        }
         "window.open" => {
             let args = args()?;
             let title = args.title.unwrap_or_default();
@@ -1134,6 +1145,7 @@ pub(crate) mod fixture {
             | "window.prevent_close" => window(),
             call if crate::dialogs::handles(call) => crate::dialogs::args(request).err(),
             call if crate::device::handles(call) => crate::device::read(request).err(),
+            "update.check" | "update.install" | "app.restart" => None,
             "notification.permission" | "notification.request_permission" | "tray.remove" => None,
             "notification.send"
             | "menu.popup"
@@ -1144,7 +1156,7 @@ pub(crate) mod fixture {
         }
     }
 
-    const CALLS: [&str; 41] = [
+    const CALLS: [&str; 44] = [
         "clipboard.read",
         "clipboard.write",
         "app.appearance",
@@ -1186,6 +1198,9 @@ pub(crate) mod fixture {
         "location.current",
         "location.permission",
         "location.request_permission",
+        "update.check",
+        "update.install",
+        "app.restart",
     ];
 
     fn calls_fixture() -> Vec<Value> {
@@ -1227,6 +1242,7 @@ pub(crate) mod fixture {
             // `dialogs.rs` runs these, as they reply later.
             .chain(crate::dialogs::CALLS)
             .chain(crate::device::CALLS)
+            .chain(crate::extras::CALLS)
             .collect();
         assert_eq!(handled, CALLS.into_iter().collect());
     }

@@ -70,5 +70,6 @@
   {"name": "opened with a deep link", "build": "opened", "args": {"urls": ["myapp://open/42"]}, "json": {"type": "open", "urls": ["myapp://open/42"]}},
   {"name": "tray icon clicked", "build": "tray", "args": {"event": "click"}, "json": {"type": "tray", "event": "click"}},
   {"name": "tray icon double-clicked", "build": "tray", "args": {"event": "double-click"}, "json": {"type": "tray", "event": "double-click"}},
-  {"name": "global shortcut pressed", "build": "shortcut", "args": {"keys": "secondary-shift-k"}, "json": {"type": "shortcut", "keys": "secondary-shift-k"}}
+  {"name": "global shortcut pressed", "build": "shortcut", "args": {"keys": "secondary-shift-k"}, "json": {"type": "shortcut", "keys": "secondary-shift-k"}},
+  {"name": "started again while running", "build": "instance", "args": {"args": ["jobs", "--open", "report.csv"], "cwd": "/home/ana"}, "json": {"type": "instance", "args": ["jobs", "--open", "report.csv"], "cwd": "/home/ana"}}
 ]

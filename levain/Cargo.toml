@@ -66,6 +66,11 @@ tauri-plugin-gpui = { git = "https://github.com/ziinc/tauri-gpui", features = ["
 tauri-plugin-cli = "2"
 # `shortcut.*` calls: keys that reach the app wherever focus is.
 tauri-plugin-global-shortcut = "2"
+# The app's own deep links (`app.json`'s `deep_link`), one instance at a
+# time (`single_instance`), and updates (`updater`: `update.*` calls).
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-updater = "2"
 
 # The portal's colour scheme, read off the main thread (`portal.rs`). Both
 # are already in the tree, through rfd and async-io.

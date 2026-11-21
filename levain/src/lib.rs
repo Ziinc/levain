@@ -13,6 +13,7 @@ pub mod components;
 mod device;
 mod dialogs;
 pub mod events;
+mod extras;
 mod keymap;
 mod lifecycle;
 mod list;
@@ -94,6 +95,13 @@ pub fn run<R: Runtime>(runtime: R, #[allow(unused_mut)] mut context: tauri::Cont
     #[cfg(desktop)]
     let cli = located.as_ref().ok().and_then(|app| app.cli.clone());
     #[cfg(desktop)]
+    let extras = located
+        .as_ref()
+        .map(|app| extras::Extras::read(&app.root))
+        .unwrap_or_default();
+    #[cfg(desktop)]
+    extras.configure(context.config_mut());
+    #[cfg(desktop)]
     if let Some(cli) = &cli {
         context
             .config_mut()
@@ -102,7 +110,10 @@ pub fn run<R: Runtime>(runtime: R, #[allow(unused_mut)] mut context: tauri::Cont
             .insert("cli".into(), cli.clone());
     }
 
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    let builder = extras.plugins(builder);
+    let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init());
@@ -121,6 +132,8 @@ pub fn run<R: Runtime>(runtime: R, #[allow(unused_mut)] mut context: tauri::Cont
     builder
         .setup(move |app| {
             pick::install(app.handle().clone());
+            #[cfg(desktop)]
+            extras.setup(app.handle());
             #[cfg(mobile)]
             let located = {
                 use tauri::Manager;

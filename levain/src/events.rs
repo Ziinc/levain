@@ -74,6 +74,12 @@ pub fn shortcut(keys: &str) -> Value {
     json!({"type": "shortcut", "keys": keys})
 }
 
+/// The app was started again while running (`single_instance`): the new
+/// process's arguments and working directory. It exits; this one stays.
+pub fn instance(args: &[String], cwd: &str) -> Value {
+    json!({"type": "instance", "args": args, "cwd": cwd})
+}
+
 /// A platform call's result.
 pub fn reply(reference: Value, result: Value) -> Value {
     json!({"type": "reply", "ref": reference, "result": result})
@@ -126,6 +132,15 @@ mod tests {
             "window" => window(w(), s("event"), a["extra"].clone()),
             "tray" => tray(s("event")),
             "shortcut" => shortcut(s("keys")),
+            "instance" => instance(
+                &a["args"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|x| x.as_str().unwrap().to_owned())
+                    .collect::<Vec<_>>(),
+                s("cwd"),
+            ),
             "opened" => opened(
                 a["urls"]
                     .as_array()
@@ -163,6 +178,7 @@ mod tests {
             "change",
             "click",
             "drag",
+            "instance",
             "keydown",
             "menu",
             "open",
