@@ -84,6 +84,7 @@ has `crate-type = ["staticlib", "cdylib", "rlib"]`.
 | Feature | Default | Effect |
 | --- | --- | --- |
 | `components-gpui-kit` | yes | Compiles in the `gpui-kit` native component set |
+| `geolocation` | no | `location.*` calls on phones. It adds the location permissions to every app built with it |
 | `playwright` | no | Serves the windows to Playwright clients when `GPUI_PLAYWRIGHT` is set (a port, such as `9333`). `GPUI_PLAYWRIGHT_ENDPOINT_FILE` names a file the endpoint is written to. For test builds only |
 
 A host forwards them (`components-gpui-kit = ["levain/components-gpui-kit"]`)
@@ -114,7 +115,12 @@ without it is not a frame. The other keys are optional:
  "keymap": [{"keys": "cmd-s", "action": "save", "context": "optional"}]}
 ```
 
-A node is a string (text) or an element. `a` and `c` default to empty:
+A node is a string (text) or an element. `a` and `c` default to empty.
+`<img src>` takes a path, a `file://` or `http(s)://` URL, or a base64
+`data:` URL; its classes size it. Besides flex, classes include `hidden`,
+`block`, `grid`, `grid-cols-N`, `grid-rows-N`, `col-span-N`, `row-span-N`
+and `col-`/`row-` `start-N`/`end-N`. On phones the view is padded clear of
+the status bar, notch, home indicator and keyboard.
 
 ```json
 {"t": "button", "a": {"phx-click": "inc", "class": "px-2"}, "c": ["+"]}
@@ -159,7 +165,12 @@ event has `type`; `window` is the window number.
 | `action` | `window`, `action` (a keymap action) |
 | `appearance` | `window`, `appearance` (`light` or `dark`) |
 | `resync` | `window` |
-| `menu` | `window` (always 0), `event` |
+| `menu` | `window` (always 0), `event` (a menu bar, tray or context menu item's `id`) |
+| `window` | `window`, `event`: `resized` (`width`, `height`), `moved` (`x`, `y`), `focused`, `blurred`, `close-requested` (after `window.prevent_close`), `closed`, `drop` (`paths`, `x`, `y`: files dropped on it), and on phones `suspended` and `resumed`. Sizes are logical pixels |
+| `open` | `urls`: the app was opened with them (deep links; files on macOS) |
+| `tray` | `event`: `click` or `double-click` on the tray icon |
+| `shortcut` | `keys`: a global shortcut, as registered, was pressed |
+| `instance` | `args`, `cwd`: the app was started again while running, with `single_instance` (window 0 is focused; the new process exits) |
 | `reply` | `ref`, `result`, and `error` on failure |
 
 ### Platform calls
@@ -181,6 +192,31 @@ null` and `"error": "<call>: <message>"`. An unknown call is an error reply.
 | `window.set_title` | `window`, `title` | `null` |
 | `window.set_bounds` | `window`, `x?`, `y?`, `width?`, `height?` | `null` |
 | `window.info` | `window` | `{title, x, y, width, height}`, or `null` for no such window |
+| `window.minimize`, `window.maximize`, `window.unmaximize`, `window.focus` | `window` | `null`; an error for no such window |
+| `window.set_fullscreen`, `window.set_always_on_top` | `window`, `on?` (default `true`) | `null` |
+| `window.set_min_size` | `window`, `width?`, `height?` (neither: no minimum) | `null` |
+| `window.prevent_close` | `window`, `on?` (default `true`) | `null`. Closing the window then sends `close-requested` instead; `window.close` still closes it |
+| `app.paths` | | `{data, local_data, config, cache, log, home, documents, downloads, pictures, temp, resources}`: paths, `null` where the platform has none |
+| `app.info` | | `{os, arch, family, locale, name, version, identifier}` |
+| `dialog.message` | `message`, `title?`, `kind?` (`info`, `warning`, `error`), `ok?` | `null`, once dismissed |
+| `dialog.confirm` | `message`, `title?`, `kind?`, `ok?`, `cancel?` | `true` or `false` |
+| `dialog.open` | `title?`, `multiple?`, `directory?`, `filters?` (`[{name, extensions}]`), `default_path?` | A path, a list with `multiple`, or `null` for a cancel |
+| `dialog.save` | `title?`, `default_name?`, `default_path?`, `filters?` | A path or `null` |
+| `notification.send` | `title`, `body?` | `null` |
+| `notification.permission`, `notification.request_permission` | | `granted`, `denied`, `prompt` or `promptWithRationale` (Android) |
+| `menu.popup` | `window`, `items` (as in `menu.set`) | `null`. A context menu at the pointer; desktop only |
+| `tray.set` | `icon?` (a PNG; the app's icon by default), `tooltip?`, `items?` | `null`. Desktop only; Linux needs libayatana-appindicator3 |
+| `tray.remove` | | `null` |
+| `shortcut.register`, `shortcut.unregister` | `keys` (GPUI syntax, `secondary-shift-k`) | `null`. Keys that reach the app wherever focus is; desktop only |
+| `haptics.vibrate` | `duration?` (ms, default 300) | `null`. Phones only, as are all `haptics.*` |
+| `haptics.impact` | `style?`: `light`, `medium` (default), `heavy`, `soft`, `rigid` | `null` |
+| `haptics.notification` | `kind?`: `success` (default), `warning`, `error` | `null` |
+| `haptics.selection` | | `null` |
+| `location.current` | `high_accuracy?` | `{latitude, longitude, accuracy, altitude, speed, heading, timestamp}`. Phones, with the host's `geolocation` feature |
+| `location.permission`, `location.request_permission` | | `granted`, `denied`, `prompt` or `promptWithRationale` |
+| `update.check` | | `null` for no update, else `{version, current_version, date, notes}`. Desktop, with `updater` |
+| `update.install` | | As `update.check`, once the update is downloaded and installed |
+| `app.restart` | | `null`, sent before the app restarts (after an update) |
 | `cli.matches` | | The parsed command line, as `tauri-plugin-cli` gives it (see [Command-line apps](#command-line-apps)). An error if the app declares no `cli` |
 | `app.exit` | `code?` (integer, default 0) | `null`, sent before the process exits with `code` |
 
@@ -234,6 +270,28 @@ error. A `cli` that does not fit the plugin's schema fails the host's
 startup. On Linux a headless run still needs a display (X or Wayland, or
 `xvfb-run`): Tauri initialises GTK at startup and fails without one, with
 "Failed to initialize GTK".
+
+### Deep links, one instance, updates
+
+On desktop, an app's `app.json` can also ask for these, each in the config
+its Tauri plugin takes:
+
+```json
+{"single_instance": true,
+ "deep_link": {"desktop": {"schemes": ["jobs"]}},
+ "updater": {"pubkey": "<minisign public key>", "endpoints": ["https://example.com/{{target}}/{{current_version}}"]}}
+```
+
+- `single_instance`: a second start sends the running app an `instance`
+  event and exits.
+- `deep_link`: `jobs://...` URLs reach the app as `open` events. On Linux
+  and Windows the schemes are registered at startup.
+- `updater`: `update.check` and `update.install`. Releases are signed with
+  the developer's own key (`TAURI_SIGNING_PRIVATE_KEY` and
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` when bundling); levain holds none.
+
+On phones, URL schemes are declared in the app's project and arrive as
+`open` events too; updates come from the app stores.
 
 ### Component sets
 

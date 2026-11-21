@@ -14,6 +14,9 @@ description = "The shared native host of the Boulangerie libraries: GPUI on Taur
 default = ["components-gpui-kit"]
 # Native component sets (`components.rs`), one feature each.
 components-gpui-kit = []
+# `location.current` on phones. Off by default: the plugin declares the
+# location permissions, which every app built with it then asks for.
+geolocation = ["dep:tauri-plugin-geolocation"]
 # Serves the app's windows to Playwright clients (gpui-playwright) when
 # GPUI_PLAYWRIGHT is set. Test builds only: release builds leave it out.
 playwright = ["dep:gpui-playwright", "gpui-kit/test-support", "gpui-playwright/painted-text"]
@@ -29,6 +32,8 @@ levain-build = { path = "../levain-build" }
 
 [dependencies]
 async-channel = "2"
+# `<img src="data:...;base64,...">`.
+base64 = "0.22"
 # Text inputs and checkboxes, and the Root that observes them for Playwright.
 gpui-kit = { version = "=0.7.3", default-features = false, features = ["component", "assets"] }
 gpui-playwright = { git = "https://github.com/Ziinc/gpui-playwright", rev = "14ec1fe92f2c9ca58607808abdc824d20fa1ca4d", optional = true }
@@ -40,13 +45,17 @@ levain-abi = { path = "../levain-abi" }
 serde = { version = "1", features = ["derive"] }
 # Native open and save dialogs for phx-pick-file / phx-pick-save.
 tauri-plugin-dialog = "2"
+# `notification.*` calls.
+tauri-plugin-notification = "2"
 # open_url: tauri-gpui's platform leaves URLs to it.
 tauri-plugin-opener = "2"
 serde_json = "1"
+# `app.info`'s locale.
+sys-locale = "0.3"
 # Tauri's defaults without `dbus`, as tauri-plugin-gpui has them: TAO's portal
 # colour-scheme lookup blocks the main thread 5 s per call when the portal
 # never answers. `portal.rs` reads it off the main thread instead.
-tauri = { version = "2.12", default-features = false, features = ["unstable", "wry", "compression", "common-controls-v6", "dynamic-acl", "x11"] }
+tauri = { version = "2.12", default-features = false, features = ["unstable", "wry", "compression", "common-controls-v6", "dynamic-acl", "x11", "tray-icon", "image-png"] }
 # tauri-gpui's main is on gpui-pre =0.3.9, the snapshot gpui-kit 0.7.3 uses.
 # Switch to a release once one is published.
 tauri-plugin-gpui = { git = "https://github.com/ziinc/tauri-gpui", features = ["mobile"] }
@@ -55,6 +64,13 @@ tauri-plugin-gpui = { git = "https://github.com/ziinc/tauri-gpui", features = ["
 # require: it does not build for Android or iOS.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-cli = "2"
+# `shortcut.*` calls: keys that reach the app wherever focus is.
+tauri-plugin-global-shortcut = "2"
+# The app's own deep links (`app.json`'s `deep_link`), one instance at a
+# time (`single_instance`), and updates (`updater`: `update.*` calls).
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-updater = "2"
 
 # The portal's colour scheme, read off the main thread (`portal.rs`). Both
 # are already in the tree, through rfd and async-io.
@@ -71,6 +87,11 @@ log = "0.4"
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 flate2 = "1"
 tar = "0.4"
+# `haptics.*` calls.
+tauri-plugin-haptics = "2"
+# `location.*` calls, with the `geolocation` feature: it adds the location
+# permissions to the app.
+tauri-plugin-geolocation = { version = "2", optional = true }
 
 [dev-dependencies]
 # GPUI's headless test platform (`TestAppContext`, `#[gpui_kit::test]`), and

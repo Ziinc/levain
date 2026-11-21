@@ -47,6 +47,39 @@ pub fn menu(event: &str) -> Value {
     json!({"type": "menu", "window": 0, "event": event})
 }
 
+/// Something happened to a window: `resized` (`width`, `height`), `moved`
+/// (`x`, `y`), `focused`, `blurred`, `close-requested`, `closed`, `drop`
+/// (`paths`, `x`, `y`), or on phones `suspended` and `resumed`. `extra` is an
+/// object of the event's own keys.
+pub fn window(window: u32, event: &str, extra: Value) -> Value {
+    let mut json = json!({"type": "window", "window": window, "event": event});
+    if let (Some(json), Value::Object(extra)) = (json.as_object_mut(), extra) {
+        json.extend(extra);
+    }
+    json
+}
+
+/// The app was opened with URLs: deep links, or files on macOS.
+pub fn opened<'a>(urls: impl IntoIterator<Item = &'a str>) -> Value {
+    json!({"type": "open", "urls": urls.into_iter().collect::<Vec<_>>()})
+}
+
+/// The tray icon was clicked (`click`) or double-clicked (`double-click`).
+pub fn tray(event: &str) -> Value {
+    json!({"type": "tray", "event": event})
+}
+
+/// A global shortcut (`shortcut.register`) was pressed; `keys` as registered.
+pub fn shortcut(keys: &str) -> Value {
+    json!({"type": "shortcut", "keys": keys})
+}
+
+/// The app was started again while running (`single_instance`): the new
+/// process's arguments and working directory. It exits; this one stays.
+pub fn instance(args: &[String], cwd: &str) -> Value {
+    json!({"type": "instance", "args": args, "cwd": cwd})
+}
+
 /// A platform call's result.
 pub fn reply(reference: Value, result: Value) -> Value {
     json!({"type": "reply", "ref": reference, "result": result})
@@ -96,6 +129,25 @@ mod tests {
             "appearance" => appearance(w(), s("appearance")),
             "resync" => resync(w()),
             "menu" => menu(s("event")),
+            "window" => window(w(), s("event"), a["extra"].clone()),
+            "tray" => tray(s("event")),
+            "shortcut" => shortcut(s("keys")),
+            "instance" => instance(
+                &a["args"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|x| x.as_str().unwrap().to_owned())
+                    .collect::<Vec<_>>(),
+                s("cwd"),
+            ),
+            "opened" => opened(
+                a["urls"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|u| u.as_str().unwrap()),
+            ),
             "reply" => reply(a["ref"].clone(), a["result"].clone()),
             "reply_error" => reply_error(a["ref"].clone(), s("error").into()),
             other => panic!("no event builder {other}"),
@@ -126,13 +178,18 @@ mod tests {
             "change",
             "click",
             "drag",
+            "instance",
             "keydown",
             "menu",
+            "open",
             "pick",
             "reply",
             "resync",
             "rows",
+            "shortcut",
             "submit",
+            "tray",
+            "window",
         ];
         assert_eq!(types.into_iter().collect::<Vec<_>>(), all);
     }

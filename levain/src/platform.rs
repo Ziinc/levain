@@ -27,6 +27,8 @@ struct WindowArgs {
     y: Option<f64>,
     width: Option<f64>,
     height: Option<f64>,
+    /// Turns a setting on or off (`window.set_fullscreen` and the like).
+    on: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, PartialEq)]
@@ -85,10 +87,23 @@ fn handle_with<R: tauri::Runtime>(
             return;
         }
     };
+    if crate::dialogs::handles(&request.call) {
+        return crate::dialogs::handle(request, app);
+    }
+    if crate::device::handles(&request.call) {
+        return crate::device::handle(request, app);
+    }
+    if crate::extras::handles(&request.call) {
+        return crate::extras::handle(request, app);
+    }
     let outcome = run(&request, app, open, cx);
     let exiting = (request.call == "app.exit" && outcome.is_ok())
         .then(|| exit_code(&request.args).unwrap_or(0));
+    let restarting = request.call == "app.restart";
     bridge::emit(&reply_for(&request, outcome));
+    if restarting {
+        app.restart();
+    }
     if let Some(code) = exiting {
         // Nothing the app printed may be lost with the process.
         use std::io::Write;
@@ -157,7 +172,7 @@ fn parse(json: &[u8]) -> Result<Request, (serde_json::Error, Option<u64>)> {
 }
 
 /// The reply event for how `request` went.
-fn reply_for(request: &Request, outcome: Result<Value, String>) -> Value {
+pub(crate) fn reply_for(request: &Request, outcome: Result<Value, String>) -> Value {
     match outcome {
         Ok(result) => crate::events::reply(request.reference.into(), result),
         Err(error) => crate::events::reply_error(
@@ -212,6 +227,10 @@ fn run<R: tauri::Runtime>(
         }
         "cli.matches" => cli_matches(app),
         "app.exit" => exit_code(&request.args).map(|_| Value::Null),
+        "app.restart" => {
+            // After the reply is sent, as `app.exit` does.
+            Ok(Value::Null)
+        }
         "window.open" => {
             let args = args()?;
             let title = args.title.unwrap_or_default();
@@ -220,7 +239,9 @@ fn run<R: tauri::Runtime>(
             Ok(Value::Null)
         }
         "window.close" => {
-            if let Some(window) = window(app, args()?.window) {
+            let id = args()?.window;
+            crate::lifecycle::prevent_close(id, false);
+            if let Some(window) = window(app, id) {
                 window.close().map_err(|e| e.to_string())?;
             }
             Ok(Value::Null)
@@ -253,8 +274,106 @@ fn run<R: tauri::Runtime>(
             Some(window) => info(&window).map_err(|e| e.to_string()),
             None => Ok(Value::Null),
         },
+        "window.minimize" => desktop_window!(app, args()?, |w, _a| w.minimize()),
+        "window.maximize" => desktop_window!(app, args()?, |w, _a| w.maximize()),
+        "window.unmaximize" => desktop_window!(app, args()?, |w, _a| w.unmaximize()),
+        "window.focus" => act(app, args()?, |w, _| w.set_focus()),
+        "window.set_fullscreen" => {
+            desktop_window!(app, args()?, |w, a| w.set_fullscreen(a.on.unwrap_or(true)))
+        }
+        "window.set_always_on_top" => {
+            desktop_window!(app, args()?, |w, a| w
+                .set_always_on_top(a.on.unwrap_or(true)))
+        }
+        "window.set_min_size" => act(app, args()?, |w, a| match (a.width, a.height) {
+            (None, None) => w.set_min_size(None::<tauri::LogicalSize<f64>>),
+            (width, height) => w.set_min_size(Some(tauri::LogicalSize::new(
+                width.unwrap_or(0.),
+                height.unwrap_or(0.),
+            ))),
+        }),
+        "window.prevent_close" => {
+            let args = args()?;
+            crate::lifecycle::prevent_close(args.window, args.on.unwrap_or(true));
+            Ok(Value::Null)
+        }
+        "app.paths" => Ok(paths(app)),
+        "notification.send" => crate::services::notify(app, &request.args),
+        "notification.permission" => crate::services::notification_permission(app, false),
+        "notification.request_permission" => crate::services::notification_permission(app, true),
+        "menu.popup" => crate::services::popup(app, &request.args),
+        "tray.set" => crate::services::tray(app, &request.args),
+        "tray.remove" => crate::services::tray_remove(app),
+        "shortcut.register" => crate::services::shortcut(app, &request.args, true),
+        "shortcut.unregister" => crate::services::shortcut(app, &request.args, false),
+        "app.info" => Ok(app_info(app)),
         other => Err(format!("no platform call `{other}`")),
     }
+}
+
+/// [`act`] on desktop; on phones, whose windows are their screens, an error.
+macro_rules! desktop_window {
+    ($app:expr, $args:expr, |$w:ident, $a:ident| $body:expr) => {{
+        #[cfg(desktop)]
+        let outcome = act($app, $args, |$w, $a| $body);
+        #[cfg(mobile)]
+        let outcome = {
+            let _ = ($app, $args);
+            Err::<Value, String>("not available on phones".into())
+        };
+        outcome
+    }};
+}
+use desktop_window;
+
+/// Runs `f` on the window `args` names: an error if there is none.
+fn act<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    args: WindowArgs,
+    f: impl FnOnce(&tauri::Window<R>, &WindowArgs) -> tauri::Result<()>,
+) -> Result<Value, String> {
+    let window = window(app, args.window).ok_or("no such window")?;
+    f(&window, &args).map_err(|e| e.to_string())?;
+    Ok(Value::Null)
+}
+
+/// Where the app keeps its files, and the user's folders: each a path, or
+/// `null` where the platform has none.
+fn paths<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Value {
+    let resolver = app.path();
+    let path = |dir: tauri::Result<std::path::PathBuf>| {
+        dir.ok()
+            .map_or(Value::Null, |p| Value::from(p.to_string_lossy()))
+    };
+    json!({
+        "data": path(resolver.app_data_dir()),
+        "local_data": path(resolver.app_local_data_dir()),
+        "config": path(resolver.app_config_dir()),
+        "cache": path(resolver.app_cache_dir()),
+        "log": path(resolver.app_log_dir()),
+        "home": path(resolver.home_dir()),
+        "documents": path(resolver.document_dir()),
+        "downloads": path(resolver.download_dir()),
+        "pictures": path(resolver.picture_dir()),
+        "temp": path(resolver.temp_dir()),
+        "resources": path(resolver.resource_dir()),
+    })
+}
+
+/// The platform and the app: `os` (`linux`, `macos`, `windows`, `android`,
+/// `ios`), `arch`, `family`, the user's `locale` (BCP 47, or `null`), and
+/// the app's `name`, `version` and `identifier`.
+fn app_info<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Value {
+    let package = app.package_info();
+    json!({
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "family": std::env::consts::FAMILY,
+        "locale": sys_locale::get_locale(),
+        "name": package.name,
+        "version": package.version.to_string(),
+        "identifier": app.config().identifier,
+    })
 }
 
 pub fn appearance(appearance: WindowAppearance) -> &'static str {
@@ -632,6 +751,75 @@ mod call_tests {
     }
 
     #[gpui_kit::test]
+    fn windows_are_minimized_maximized_and_kept_open_by_the_app(cx: &mut gpui_kit::TestAppContext) {
+        let (h, app, opened) = setup();
+        crate::windows::build(app.handle(), 6, "Six", (300., 200.)).unwrap();
+        let mut n = 0;
+        let mut reply = |cx: &mut _, name: &str, args: Value| {
+            n += 1;
+            call(
+                &h,
+                &app,
+                cx,
+                &opened,
+                json!({"call": name, "ref": n, "args": args}),
+            )
+        };
+        for name in [
+            "window.minimize",
+            "window.maximize",
+            "window.unmaximize",
+            "window.focus",
+            "window.set_fullscreen",
+            "window.set_always_on_top",
+            "window.set_min_size",
+        ] {
+            let answer = reply(cx, name, json!({"window": 6, "on": true, "width": 100}));
+            assert_eq!(answer["result"], Value::Null, "{name}");
+            assert_eq!(answer.get("error"), None, "{name}: {answer}");
+            let missing = reply(cx, name, json!({"window": 99}));
+            assert_eq!(missing["error"], format!("{name}: no such window"));
+        }
+        reply(cx, "window.prevent_close", json!({"window": 6}));
+        assert!(crate::lifecycle::is_prevented(6));
+        // The app closing it itself is not stopped.
+        reply(cx, "window.close", json!({"window": 6}));
+        assert!(!crate::lifecycle::is_prevented(6));
+    }
+
+    #[gpui_kit::test]
+    fn the_app_learns_its_paths_and_platform(cx: &mut gpui_kit::TestAppContext) {
+        let (h, app, opened) = setup();
+        let paths = call(
+            &h,
+            &app,
+            cx,
+            &opened,
+            json!({"call": "app.paths", "ref": 1}),
+        );
+        for key in [
+            "data",
+            "config",
+            "cache",
+            "home",
+            "temp",
+            "documents",
+            "resources",
+        ] {
+            assert!(paths["result"].get(key).is_some(), "{key}: {paths}");
+        }
+        assert!(paths["result"]["temp"].is_string());
+        let info =
+            call(&h, &app, cx, &opened, json!({"call": "app.info", "ref": 2}))["result"].clone();
+        assert_eq!(info["os"], std::env::consts::OS);
+        assert_eq!(info["arch"], std::env::consts::ARCH);
+        assert!(
+            info["name"].is_string() && info["version"].is_string(),
+            "{info}"
+        );
+    }
+
+    #[gpui_kit::test]
     fn windows_are_closed_titled_resized_and_described(cx: &mut gpui_kit::TestAppContext) {
         let (h, app, opened) = setup();
         crate::windows::build(app.handle(), 1, "First", (300., 200.)).unwrap();
@@ -935,20 +1123,40 @@ pub(crate) mod fixture {
                 .map(|e| e.to_string())
         };
         match request.call.as_str() {
-            "clipboard.read" | "app.appearance" | "cli.matches" => None,
+            "clipboard.read" | "app.appearance" | "cli.matches" | "app.paths" | "app.info" => None,
             "app.exit" => exit_code(&request.args).err(),
             "clipboard.write" => text("text"),
             "app.open_url" => text("url"),
             "menu.set" => serde_json::from_value::<Vec<MenuSpec>>(request.args["menus"].clone())
                 .err()
                 .map(|e| e.to_string()),
-            "window.open" | "window.close" | "window.set_title" | "window.set_bounds"
-            | "window.info" => window(),
+            "window.open"
+            | "window.close"
+            | "window.set_title"
+            | "window.set_bounds"
+            | "window.info"
+            | "window.minimize"
+            | "window.maximize"
+            | "window.unmaximize"
+            | "window.focus"
+            | "window.set_fullscreen"
+            | "window.set_always_on_top"
+            | "window.set_min_size"
+            | "window.prevent_close" => window(),
+            call if crate::dialogs::handles(call) => crate::dialogs::args(request).err(),
+            call if crate::device::handles(call) => crate::device::read(request).err(),
+            "update.check" | "update.install" | "app.restart" => None,
+            "notification.permission" | "notification.request_permission" | "tray.remove" => None,
+            "notification.send"
+            | "menu.popup"
+            | "tray.set"
+            | "shortcut.register"
+            | "shortcut.unregister" => crate::services::args_error(&request.call, &request.args),
             other => Some(format!("no platform call `{other}`")),
         }
     }
 
-    const CALLS: [&str; 12] = [
+    const CALLS: [&str; 44] = [
         "clipboard.read",
         "clipboard.write",
         "app.appearance",
@@ -961,6 +1169,38 @@ pub(crate) mod fixture {
         "window.info",
         "cli.matches",
         "app.exit",
+        "window.minimize",
+        "window.maximize",
+        "window.unmaximize",
+        "window.focus",
+        "window.set_fullscreen",
+        "window.set_always_on_top",
+        "window.set_min_size",
+        "window.prevent_close",
+        "app.paths",
+        "app.info",
+        "dialog.message",
+        "dialog.confirm",
+        "dialog.open",
+        "dialog.save",
+        "notification.send",
+        "notification.permission",
+        "notification.request_permission",
+        "menu.popup",
+        "tray.set",
+        "tray.remove",
+        "shortcut.register",
+        "shortcut.unregister",
+        "haptics.vibrate",
+        "haptics.impact",
+        "haptics.notification",
+        "haptics.selection",
+        "location.current",
+        "location.permission",
+        "location.request_permission",
+        "update.check",
+        "update.install",
+        "app.restart",
     ];
 
     fn calls_fixture() -> Vec<Value> {
@@ -999,6 +1239,10 @@ pub(crate) mod fixture {
             .filter_map(|l| l.trim().strip_prefix('"')?.split_once("\" =>"))
             .map(|(name, _)| name)
             .filter(|n| n.contains('.'))
+            // `dialogs.rs` runs these, as they reply later.
+            .chain(crate::dialogs::CALLS)
+            .chain(crate::device::CALLS)
+            .chain(crate::extras::CALLS)
             .collect();
         assert_eq!(handled, CALLS.into_iter().collect());
     }

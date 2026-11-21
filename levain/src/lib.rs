@@ -10,8 +10,12 @@
 mod animation;
 mod bridge;
 pub mod components;
+mod device;
+mod dialogs;
 pub mod events;
+mod extras;
 mod keymap;
+mod lifecycle;
 mod list;
 #[cfg_attr(not(mobile), allow(dead_code))]
 #[cfg(any(mobile, test))]
@@ -24,6 +28,7 @@ mod platform;
 mod playwright;
 mod portal;
 mod runtime;
+mod services;
 mod style;
 mod style_gen;
 #[cfg(test)]
@@ -90,6 +95,13 @@ pub fn run<R: Runtime>(runtime: R, #[allow(unused_mut)] mut context: tauri::Cont
     #[cfg(desktop)]
     let cli = located.as_ref().ok().and_then(|app| app.cli.clone());
     #[cfg(desktop)]
+    let extras = located
+        .as_ref()
+        .map(|app| extras::Extras::read(&app.root))
+        .unwrap_or_default();
+    #[cfg(desktop)]
+    extras.configure(context.config_mut());
+    #[cfg(desktop)]
     if let Some(cli) = &cli {
         context
             .config_mut()
@@ -98,10 +110,18 @@ pub fn run<R: Runtime>(runtime: R, #[allow(unused_mut)] mut context: tauri::Cont
             .insert("cli".into(), cli.clone());
     }
 
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    let builder = extras.plugins(builder);
+    let builder = builder
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init());
+    #[cfg(desktop)]
+    let builder = builder.plugin(services::shortcut_plugin());
+    let builder = device::plugins(builder);
     // Menus and the command line are desktop only.
+    let builder = builder.on_window_event(lifecycle::on_window_event);
     #[cfg(desktop)]
     let builder = builder.on_menu_event(|_, event| platform::on_menu_event(event));
     #[cfg(desktop)]
@@ -112,6 +132,8 @@ pub fn run<R: Runtime>(runtime: R, #[allow(unused_mut)] mut context: tauri::Cont
     builder
         .setup(move |app| {
             pick::install(app.handle().clone());
+            #[cfg(desktop)]
+            extras.setup(app.handle());
             #[cfg(mobile)]
             let located = {
                 use tauri::Manager;
@@ -149,8 +171,9 @@ pub fn run<R: Runtime>(runtime: R, #[allow(unused_mut)] mut context: tauri::Cont
             }
             Ok(())
         })
-        .run(context)
-        .expect("error while running the levain host");
+        .build(context)
+        .expect("error while building the levain host")
+        .run(|app, event| lifecycle::on_run_event(app, &event));
 }
 
 /// Where the app may be found without a Tauri app: next to the executable,
