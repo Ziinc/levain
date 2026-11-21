@@ -281,6 +281,14 @@ fn run<R: tauri::Runtime>(
             Ok(Value::Null)
         }
         "app.paths" => Ok(paths(app)),
+        "notification.send" => crate::services::notify(app, &request.args),
+        "notification.permission" => crate::services::notification_permission(app, false),
+        "notification.request_permission" => crate::services::notification_permission(app, true),
+        "menu.popup" => crate::services::popup(app, &request.args),
+        "tray.set" => crate::services::tray(app, &request.args),
+        "tray.remove" => crate::services::tray_remove(app),
+        "shortcut.register" => crate::services::shortcut(app, &request.args, true),
+        "shortcut.unregister" => crate::services::shortcut(app, &request.args, false),
         "app.info" => Ok(app_info(app)),
         other => Err(format!("no platform call `{other}`")),
     }
@@ -1104,11 +1112,17 @@ pub(crate) mod fixture {
             | "window.set_min_size"
             | "window.prevent_close" => window(),
             call if crate::dialogs::handles(call) => crate::dialogs::args(request).err(),
+            "notification.permission" | "notification.request_permission" | "tray.remove" => None,
+            "notification.send"
+            | "menu.popup"
+            | "tray.set"
+            | "shortcut.register"
+            | "shortcut.unregister" => crate::services::args_error(&request.call, &request.args),
             other => Some(format!("no platform call `{other}`")),
         }
     }
 
-    const CALLS: [&str; 26] = [
+    const CALLS: [&str; 34] = [
         "clipboard.read",
         "clipboard.write",
         "app.appearance",
@@ -1135,6 +1149,14 @@ pub(crate) mod fixture {
         "dialog.confirm",
         "dialog.open",
         "dialog.save",
+        "notification.send",
+        "notification.permission",
+        "notification.request_permission",
+        "menu.popup",
+        "tray.set",
+        "tray.remove",
+        "shortcut.register",
+        "shortcut.unregister",
     ];
 
     fn calls_fixture() -> Vec<Value> {

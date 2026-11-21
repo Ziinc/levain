@@ -64,6 +64,16 @@ pub fn opened<'a>(urls: impl IntoIterator<Item = &'a str>) -> Value {
     json!({"type": "open", "urls": urls.into_iter().collect::<Vec<_>>()})
 }
 
+/// The tray icon was clicked (`click`) or double-clicked (`double-click`).
+pub fn tray(event: &str) -> Value {
+    json!({"type": "tray", "event": event})
+}
+
+/// A global shortcut (`shortcut.register`) was pressed; `keys` as registered.
+pub fn shortcut(keys: &str) -> Value {
+    json!({"type": "shortcut", "keys": keys})
+}
+
 /// A platform call's result.
 pub fn reply(reference: Value, result: Value) -> Value {
     json!({"type": "reply", "ref": reference, "result": result})
@@ -114,6 +124,8 @@ mod tests {
             "resync" => resync(w()),
             "menu" => menu(s("event")),
             "window" => window(w(), s("event"), a["extra"].clone()),
+            "tray" => tray(s("event")),
+            "shortcut" => shortcut(s("keys")),
             "opened" => opened(
                 a["urls"]
                     .as_array()
@@ -158,7 +170,9 @@ mod tests {
             "reply",
             "resync",
             "rows",
+            "shortcut",
             "submit",
+            "tray",
             "window",
         ];
         assert_eq!(types.into_iter().collect::<Vec<_>>(), all);

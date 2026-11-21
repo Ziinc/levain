@@ -26,6 +26,7 @@ mod platform;
 mod playwright;
 mod portal;
 mod runtime;
+mod services;
 mod style;
 mod style_gen;
 #[cfg(test)]
@@ -102,7 +103,10 @@ pub fn run<R: Runtime>(runtime: R, #[allow(unused_mut)] mut context: tauri::Cont
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init());
+    #[cfg(desktop)]
+    let builder = builder.plugin(services::shortcut_plugin());
     // Menus and the command line are desktop only.
     let builder = builder.on_window_event(lifecycle::on_window_event);
     #[cfg(desktop)]

@@ -42,6 +42,8 @@ levain-abi = { path = "../levain-abi" }
 serde = { version = "1", features = ["derive"] }
 # Native open and save dialogs for phx-pick-file / phx-pick-save.
 tauri-plugin-dialog = "2"
+# `notification.*` calls.
+tauri-plugin-notification = "2"
 # open_url: tauri-gpui's platform leaves URLs to it.
 tauri-plugin-opener = "2"
 serde_json = "1"
@@ -50,7 +52,7 @@ sys-locale = "0.3"
 # Tauri's defaults without `dbus`, as tauri-plugin-gpui has them: TAO's portal
 # colour-scheme lookup blocks the main thread 5 s per call when the portal
 # never answers. `portal.rs` reads it off the main thread instead.
-tauri = { version = "2.12", default-features = false, features = ["unstable", "wry", "compression", "common-controls-v6", "dynamic-acl", "x11"] }
+tauri = { version = "2.12", default-features = false, features = ["unstable", "wry", "compression", "common-controls-v6", "dynamic-acl", "x11", "tray-icon", "image-png"] }
 # tauri-gpui's main is on gpui-pre =0.3.9, the snapshot gpui-kit 0.7.3 uses.
 # Switch to a release once one is published.
 tauri-plugin-gpui = { git = "https://github.com/ziinc/tauri-gpui", features = ["mobile"] }
@@ -59,6 +61,8 @@ tauri-plugin-gpui = { git = "https://github.com/ziinc/tauri-gpui", features = ["
 # require: it does not build for Android or iOS.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-cli = "2"
+# `shortcut.*` calls: keys that reach the app wherever focus is.
+tauri-plugin-global-shortcut = "2"
 
 # The portal's colour scheme, read off the main thread (`portal.rs`). Both
 # are already in the tree, through rfd and async-io.

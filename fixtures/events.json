@@ -67,5 +67,8 @@
   {"name": "files dropped on a window", "build": "window", "args": {"window": 0, "event": "drop", "extra": {"paths": ["/home/ana/a.png"], "x": 12.0, "y": 30.0}}, "json": {"type": "window", "window": 0, "event": "drop", "paths": ["/home/ana/a.png"], "x": 12.0, "y": 30.0}},
   {"name": "phone app suspended", "build": "window", "args": {"window": 0, "event": "suspended", "extra": {}}, "json": {"type": "window", "window": 0, "event": "suspended"}},
   {"name": "phone app resumed", "build": "window", "args": {"window": 0, "event": "resumed", "extra": {}}, "json": {"type": "window", "window": 0, "event": "resumed"}},
-  {"name": "opened with a deep link", "build": "opened", "args": {"urls": ["myapp://open/42"]}, "json": {"type": "open", "urls": ["myapp://open/42"]}}
+  {"name": "opened with a deep link", "build": "opened", "args": {"urls": ["myapp://open/42"]}, "json": {"type": "open", "urls": ["myapp://open/42"]}},
+  {"name": "tray icon clicked", "build": "tray", "args": {"event": "click"}, "json": {"type": "tray", "event": "click"}},
+  {"name": "tray icon double-clicked", "build": "tray", "args": {"event": "double-click"}, "json": {"type": "tray", "event": "double-click"}},
+  {"name": "global shortcut pressed", "build": "shortcut", "args": {"keys": "secondary-shift-k"}, "json": {"type": "shortcut", "keys": "secondary-shift-k"}}
 ]
