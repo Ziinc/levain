@@ -149,11 +149,15 @@ pub fn show<R: tauri::Runtime>(
                 (_, false, false) => {
                     dialog.pick_file(move |p| reply(Ok(answer(paths(one(p)), multiple))))
                 }
+                #[cfg(desktop)]
                 (_, true, false) => {
                     dialog.pick_folder(move |p| reply(Ok(answer(paths(one(p)), multiple))))
                 }
                 (_, false, true) => dialog.pick_files(move |p| reply(Ok(answer(paths(p), true)))),
+                #[cfg(desktop)]
                 (_, true, true) => dialog.pick_folders(move |p| reply(Ok(answer(paths(p), true)))),
+                #[cfg(mobile)]
+                (_, true, _) => reply(Err("folder dialogs are desktop only".into())),
             }
         }
     }

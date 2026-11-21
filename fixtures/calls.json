@@ -57,5 +57,13 @@
   {"name": "shortcut.register", "json": {"call": "shortcut.register", "ref": 66, "args": {"keys": "secondary-shift-k"}}},
   {"name": "shortcut.unregister", "json": {"call": "shortcut.unregister", "ref": 67, "args": {"keys": "secondary-shift-k"}}},
   {"name": "notification.send without a title", "json": {"call": "notification.send", "ref": 68, "args": {"body": "x"}}, "reply": {"type": "reply", "ref": 68, "result": null, "error": "notification.send: missing field `title`"}},
-  {"name": "shortcut.register without keys", "json": {"call": "shortcut.register", "ref": 69, "args": {}}, "reply": {"type": "reply", "ref": 69, "result": null, "error": "shortcut.register: no `keys`"}}
+  {"name": "shortcut.register without keys", "json": {"call": "shortcut.register", "ref": 69, "args": {}}, "reply": {"type": "reply", "ref": 69, "result": null, "error": "shortcut.register: no `keys`"}},
+  {"name": "haptics.vibrate", "json": {"call": "haptics.vibrate", "ref": 70, "args": {"duration": 120}}},
+  {"name": "haptics.impact", "json": {"call": "haptics.impact", "ref": 71, "args": {"style": "light"}}},
+  {"name": "haptics.notification", "json": {"call": "haptics.notification", "ref": 72, "args": {"kind": "error"}}},
+  {"name": "haptics.selection", "json": {"call": "haptics.selection", "ref": 73, "args": {}}},
+  {"name": "location.current", "json": {"call": "location.current", "ref": 74, "args": {"high_accuracy": true}}},
+  {"name": "location.permission", "json": {"call": "location.permission", "ref": 75, "args": {}}},
+  {"name": "location.request_permission", "json": {"call": "location.request_permission", "ref": 76, "args": {}}},
+  {"name": "haptics.impact with an unknown style", "json": {"call": "haptics.impact", "ref": 77, "args": {"style": "loud"}}, "reply": {"type": "reply", "ref": 77, "result": null, "error": "haptics.impact: `style`: unknown variant `loud`, expected one of `light`, `medium`, `heavy`, `soft`, `rigid`"}}
 ]

@@ -14,6 +14,9 @@ description = "The shared native host of the Boulangerie libraries: GPUI on Taur
 default = ["components-gpui-kit"]
 # Native component sets (`components.rs`), one feature each.
 components-gpui-kit = []
+# `location.current` on phones. Off by default: the plugin declares the
+# location permissions, which every app built with it then asks for.
+geolocation = ["dep:tauri-plugin-geolocation"]
 # Serves the app's windows to Playwright clients (gpui-playwright) when
 # GPUI_PLAYWRIGHT is set. Test builds only: release builds leave it out.
 playwright = ["dep:gpui-playwright", "gpui-kit/test-support", "gpui-playwright/painted-text"]
@@ -79,6 +82,11 @@ log = "0.4"
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 flate2 = "1"
 tar = "0.4"
+# `haptics.*` calls.
+tauri-plugin-haptics = "2"
+# `location.*` calls, with the `geolocation` feature: it adds the location
+# permissions to the app.
+tauri-plugin-geolocation = { version = "2", optional = true }
 
 [dev-dependencies]
 # GPUI's headless test platform (`TestAppContext`, `#[gpui_kit::test]`), and

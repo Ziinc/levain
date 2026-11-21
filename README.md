@@ -84,6 +84,7 @@ has `crate-type = ["staticlib", "cdylib", "rlib"]`.
 | Feature | Default | Effect |
 | --- | --- | --- |
 | `components-gpui-kit` | yes | Compiles in the `gpui-kit` native component set |
+| `geolocation` | no | `location.*` calls on phones. It adds the location permissions to every app built with it |
 | `playwright` | no | Serves the windows to Playwright clients when `GPUI_PLAYWRIGHT` is set (a port, such as `9333`). `GPUI_PLAYWRIGHT_ENDPOINT_FILE` names a file the endpoint is written to. For test builds only |
 
 A host forwards them (`components-gpui-kit = ["levain/components-gpui-kit"]`)
@@ -206,6 +207,12 @@ null` and `"error": "<call>: <message>"`. An unknown call is an error reply.
 | `tray.set` | `icon?` (a PNG; the app's icon by default), `tooltip?`, `items?` | `null`. Desktop only; Linux needs libayatana-appindicator3 |
 | `tray.remove` | | `null` |
 | `shortcut.register`, `shortcut.unregister` | `keys` (GPUI syntax, `secondary-shift-k`) | `null`. Keys that reach the app wherever focus is; desktop only |
+| `haptics.vibrate` | `duration?` (ms, default 300) | `null`. Phones only, as are all `haptics.*` |
+| `haptics.impact` | `style?`: `light`, `medium` (default), `heavy`, `soft`, `rigid` | `null` |
+| `haptics.notification` | `kind?`: `success` (default), `warning`, `error` | `null` |
+| `haptics.selection` | | `null` |
+| `location.current` | `high_accuracy?` | `{latitude, longitude, accuracy, altitude, speed, heading, timestamp}`. Phones, with the host's `geolocation` feature |
+| `location.permission`, `location.request_permission` | | `granted`, `denied`, `prompt` or `promptWithRationale` |
 | `cli.matches` | | The parsed command line, as `tauri-plugin-cli` gives it (see [Command-line apps](#command-line-apps)). An error if the app declares no `cli` |
 | `app.exit` | `code?` (integer, default 0) | `null`, sent before the process exits with `code` |
 

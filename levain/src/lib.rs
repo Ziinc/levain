@@ -10,6 +10,7 @@
 mod animation;
 mod bridge;
 pub mod components;
+mod device;
 mod dialogs;
 pub mod events;
 mod keymap;
@@ -107,6 +108,7 @@ pub fn run<R: Runtime>(runtime: R, #[allow(unused_mut)] mut context: tauri::Cont
         .plugin(tauri_plugin_opener::init());
     #[cfg(desktop)]
     let builder = builder.plugin(services::shortcut_plugin());
+    let builder = device::plugins(builder);
     // Menus and the command line are desktop only.
     let builder = builder.on_window_event(lifecycle::on_window_event);
     #[cfg(desktop)]

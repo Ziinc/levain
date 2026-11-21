@@ -90,6 +90,9 @@ fn handle_with<R: tauri::Runtime>(
     if crate::dialogs::handles(&request.call) {
         return crate::dialogs::handle(request, app);
     }
+    if crate::device::handles(&request.call) {
+        return crate::device::handle(request, app);
+    }
     let outcome = run(&request, app, open, cx);
     let exiting = (request.call == "app.exit" && outcome.is_ok())
         .then(|| exit_code(&request.args).unwrap_or(0));
@@ -260,14 +263,17 @@ fn run<R: tauri::Runtime>(
             Some(window) => info(&window).map_err(|e| e.to_string()),
             None => Ok(Value::Null),
         },
-        "window.minimize" => act(app, args()?, |w, _| w.minimize()),
-        "window.maximize" => act(app, args()?, |w, _| w.maximize()),
-        "window.unmaximize" => act(app, args()?, |w, _| w.unmaximize()),
+        "window.minimize" => desktop_window!(app, args()?, |w, _a| w.minimize()),
+        "window.maximize" => desktop_window!(app, args()?, |w, _a| w.maximize()),
+        "window.unmaximize" => desktop_window!(app, args()?, |w, _a| w.unmaximize()),
         "window.focus" => act(app, args()?, |w, _| w.set_focus()),
-        "window.set_fullscreen" => act(app, args()?, |w, a| w.set_fullscreen(a.on.unwrap_or(true))),
-        "window.set_always_on_top" => act(app, args()?, |w, a| {
-            w.set_always_on_top(a.on.unwrap_or(true))
-        }),
+        "window.set_fullscreen" => {
+            desktop_window!(app, args()?, |w, a| w.set_fullscreen(a.on.unwrap_or(true)))
+        }
+        "window.set_always_on_top" => {
+            desktop_window!(app, args()?, |w, a| w
+                .set_always_on_top(a.on.unwrap_or(true)))
+        }
         "window.set_min_size" => act(app, args()?, |w, a| match (a.width, a.height) {
             (None, None) => w.set_min_size(None::<tauri::LogicalSize<f64>>),
             (width, height) => w.set_min_size(Some(tauri::LogicalSize::new(
@@ -293,6 +299,21 @@ fn run<R: tauri::Runtime>(
         other => Err(format!("no platform call `{other}`")),
     }
 }
+
+/// [`act`] on desktop; on phones, whose windows are their screens, an error.
+macro_rules! desktop_window {
+    ($app:expr, $args:expr, |$w:ident, $a:ident| $body:expr) => {{
+        #[cfg(desktop)]
+        let outcome = act($app, $args, |$w, $a| $body);
+        #[cfg(mobile)]
+        let outcome = {
+            let _ = ($app, $args);
+            Err::<Value, String>("not available on phones".into())
+        };
+        outcome
+    }};
+}
+use desktop_window;
 
 /// Runs `f` on the window `args` names: an error if there is none.
 fn act<R: tauri::Runtime>(
@@ -1112,6 +1133,7 @@ pub(crate) mod fixture {
             | "window.set_min_size"
             | "window.prevent_close" => window(),
             call if crate::dialogs::handles(call) => crate::dialogs::args(request).err(),
+            call if crate::device::handles(call) => crate::device::read(request).err(),
             "notification.permission" | "notification.request_permission" | "tray.remove" => None,
             "notification.send"
             | "menu.popup"
@@ -1122,7 +1144,7 @@ pub(crate) mod fixture {
         }
     }
 
-    const CALLS: [&str; 34] = [
+    const CALLS: [&str; 41] = [
         "clipboard.read",
         "clipboard.write",
         "app.appearance",
@@ -1157,6 +1179,13 @@ pub(crate) mod fixture {
         "tray.remove",
         "shortcut.register",
         "shortcut.unregister",
+        "haptics.vibrate",
+        "haptics.impact",
+        "haptics.notification",
+        "haptics.selection",
+        "location.current",
+        "location.permission",
+        "location.request_permission",
     ];
 
     fn calls_fixture() -> Vec<Value> {
@@ -1197,6 +1226,7 @@ pub(crate) mod fixture {
             .filter(|n| n.contains('.'))
             // `dialogs.rs` runs these, as they reply later.
             .chain(crate::dialogs::CALLS)
+            .chain(crate::device::CALLS)
             .collect();
         assert_eq!(handled, CALLS.into_iter().collect());
     }

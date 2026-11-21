@@ -6,7 +6,6 @@ use serde::Deserialize;
 use serde_json::Value;
 use tauri::Manager;
 
-use crate::bridge;
 use crate::platform::ItemSpec;
 
 fn missing(what: &str) -> String {
@@ -84,6 +83,8 @@ fn menu<R: tauri::Runtime>(
     menu.build()
 }
 
+// Phones have neither, but read the arguments all the same.
+#[cfg_attr(mobile, allow(dead_code))]
 #[derive(Deserialize)]
 struct PopupArgs {
     window: u32,
@@ -107,6 +108,8 @@ pub fn popup<R: tauri::Runtime>(app: &tauri::AppHandle<R>, args: &Value) -> Resu
     Ok(Value::Null)
 }
 
+// Phones have neither, but read the arguments all the same.
+#[cfg_attr(mobile, allow(dead_code))]
 #[derive(Deserialize)]
 struct TrayArgs {
     /// A PNG file; the app's icon when absent.
@@ -187,7 +190,7 @@ fn on_tray_event(event: &tauri::tray::TrayIconEvent) {
         } => "double-click",
         _ => return,
     };
-    bridge::emit(&crate::events::tray(name));
+    crate::bridge::emit(&crate::events::tray(name));
 }
 
 /// The keys (as the app wrote them) of each registered global shortcut, by
@@ -211,7 +214,7 @@ pub fn shortcut_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 .as_ref()
                 .and_then(|s| s.get(&shortcut.id()).cloned());
             if let Some(keys) = keys {
-                bridge::emit(&crate::events::shortcut(&keys));
+                crate::bridge::emit(&crate::events::shortcut(&keys));
             }
         })
         .build()
