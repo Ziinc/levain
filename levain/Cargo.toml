@@ -29,6 +29,8 @@ levain-build = { path = "../levain-build" }
 
 [dependencies]
 async-channel = "2"
+# `<img src="data:...;base64,...">`.
+base64 = "0.22"
 # Text inputs and checkboxes, and the Root that observes them for Playwright.
 gpui-kit = { version = "=0.7.3", default-features = false, features = ["component", "assets"] }
 gpui-playwright = { git = "https://github.com/Ziinc/gpui-playwright", rev = "14ec1fe92f2c9ca58607808abdc824d20fa1ca4d", optional = true }
@@ -43,6 +45,8 @@ tauri-plugin-dialog = "2"
 # open_url: tauri-gpui's platform leaves URLs to it.
 tauri-plugin-opener = "2"
 serde_json = "1"
+# `app.info`'s locale.
+sys-locale = "0.3"
 # Tauri's defaults without `dbus`, as tauri-plugin-gpui has them: TAO's portal
 # colour-scheme lookup blocks the main thread 5 s per call when the portal
 # never answers. `portal.rs` reads it off the main thread instead.

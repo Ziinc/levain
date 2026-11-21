@@ -10,8 +10,10 @@
 mod animation;
 mod bridge;
 pub mod components;
+mod dialogs;
 pub mod events;
 mod keymap;
+mod lifecycle;
 mod list;
 #[cfg_attr(not(mobile), allow(dead_code))]
 #[cfg(any(mobile, test))]
@@ -102,6 +104,7 @@ pub fn run<R: Runtime>(runtime: R, #[allow(unused_mut)] mut context: tauri::Cont
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init());
     // Menus and the command line are desktop only.
+    let builder = builder.on_window_event(lifecycle::on_window_event);
     #[cfg(desktop)]
     let builder = builder.on_menu_event(|_, event| platform::on_menu_event(event));
     #[cfg(desktop)]
@@ -149,8 +152,9 @@ pub fn run<R: Runtime>(runtime: R, #[allow(unused_mut)] mut context: tauri::Cont
             }
             Ok(())
         })
-        .run(context)
-        .expect("error while running the levain host");
+        .build(context)
+        .expect("error while building the levain host")
+        .run(|app, event| lifecycle::on_run_event(app, &event));
 }
 
 /// Where the app may be found without a Tauri app: next to the executable,

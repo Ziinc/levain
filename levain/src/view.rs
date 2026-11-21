@@ -213,11 +213,17 @@ impl Renderer<'_, '_> {
         } else {
             base
         };
-        let rendered: Vec<AnyElement> = children
+        let mut rendered: Vec<AnyElement> = children
             .iter()
             .enumerate()
             .map(|(i, child)| self.render(child, &format!("{path}.{i}")))
             .collect();
+        // An `<img>` is its box (the classes size it) filled by the picture.
+        if tag == "img"
+            && let Some(source) = attrs.get("src").and_then(|src| image_src(src))
+        {
+            rendered.push(gpui::img(source).size_full().into_any_element());
+        }
 
         // `animate`, `animate-from`/`animate-to` (`animation.rs`): the style
         // at this moment, over the classes; each frame asks for the next
@@ -682,6 +688,70 @@ fn render_icon(attrs: &BTreeMap<String, String>, theme: &Theme, id: &str) -> Any
             .then(|| (SharedString::from(id.to_owned()), duration_of(attrs))),
     })
     .into_any_element()
+}
+
+/// Where an `<img>`'s `src` points: a file (a path or `file://` URL), a web
+/// URL, or bytes in a base64 `data:` URL.
+#[derive(Debug, PartialEq)]
+enum ImageSrc {
+    Path(std::path::PathBuf),
+    Uri(String),
+    Bytes(gpui::ImageFormat, Vec<u8>),
+}
+
+fn image_src(src: &str) -> Option<ImageSrc> {
+    use base64::Engine;
+    if let Some(data) = src.strip_prefix("data:") {
+        let (mime, payload) = data.split_once(";base64,")?;
+        let format = gpui::ImageFormat::from_mime_type(mime)?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(payload)
+            .ok()?;
+        return Some(ImageSrc::Bytes(format, bytes));
+    }
+    if let Some(path) = src.strip_prefix("file://") {
+        return Some(ImageSrc::Path(percent_decode(path).into()));
+    }
+    if src.starts_with("http://") || src.starts_with("https://") {
+        return Some(ImageSrc::Uri(src.to_owned()));
+    }
+    (!src.is_empty()).then(|| ImageSrc::Path(src.into()))
+}
+
+/// `%20` and the like, decoded; anything malformed is kept as it is.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = bytes
+            .get(i + 1..i + 3)
+            .and_then(|h| std::str::from_utf8(h).ok())
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
+        match (bytes[i], hex) {
+            (b'%', Some(byte)) => {
+                out.push(byte);
+                i += 3;
+            }
+            (byte, _) => {
+                out.push(byte);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+impl From<ImageSrc> for gpui::ImageSource {
+    fn from(src: ImageSrc) -> Self {
+        match src {
+            ImageSrc::Path(path) => path.into(),
+            ImageSrc::Uri(uri) => gpui::SharedUri::from(uri).into(),
+            ImageSrc::Bytes(format, bytes) => {
+                std::sync::Arc::new(gpui::Image::from_bytes(format, bytes)).into()
+            }
+        }
+    }
 }
 
 /// The asset path of the icon called `name`, if gpui-kit bundles it.
@@ -1398,6 +1468,33 @@ impl gpui::Render for Root {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_sources_are_paths_urls_or_data() {
+        assert_eq!(
+            image_src("/tmp/a.png"),
+            Some(ImageSrc::Path("/tmp/a.png".into()))
+        );
+        assert_eq!(
+            image_src("file:///tmp/b%20c.png"),
+            Some(ImageSrc::Path("/tmp/b c.png".into()))
+        );
+        assert_eq!(
+            image_src("https://example.com/x.png"),
+            Some(ImageSrc::Uri("https://example.com/x.png".into()))
+        );
+        // A 1x1 PNG's first bytes, base64.
+        assert_eq!(
+            image_src("data:image/png;base64,iVBORw0KGgo="),
+            Some(ImageSrc::Bytes(
+                gpui::ImageFormat::Png,
+                vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]
+            ))
+        );
+        assert_eq!(image_src("data:text/plain;base64,aGk="), None);
+        assert_eq!(image_src("data:image/png,raw"), None);
+        assert_eq!(image_src(""), None);
+    }
 
     #[test]
     fn reads_frames_and_rows() {

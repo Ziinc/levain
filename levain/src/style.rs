@@ -113,6 +113,8 @@ fn apply_one<S: Styled>(s: S, class: &str, theme: &Theme) -> S {
         "font-bold" => s.font_weight(FontWeight::BOLD),
         "cursor-pointer" => s.cursor_pointer(),
         "cursor-default" => s.cursor_default(),
+        "hidden" => s.hidden(),
+        "block" => s.block(),
         _ => apply_parametric(s, class, theme),
     }
 }
@@ -124,6 +126,10 @@ fn apply_parametric<S: Styled>(s: S, class: &str, theme: &Theme) -> S {
     {
         return s.opacity(n / 100.);
     }
+    let s = match grid(s, class) {
+        Ok(s) => return s,
+        Err(s) => s,
+    };
     // Percentages of the parent: `w-[40%]`, `h-[75%]`.
     for (name, horizontal) in [("w-[", true), ("h-[", false)] {
         if let Some(fraction) = class
@@ -188,6 +194,29 @@ fn apply_parametric<S: Styled>(s: S, class: &str, theme: &Theme) -> S {
         }
     }
     generated(s, class)
+}
+
+/// Grid templates and placement with a number: `grid-cols-3`, `col-span-2`,
+/// `row-start-1`. Any other class is given back as `Err`.
+fn grid<S: Styled>(s: S, class: &str) -> Result<S, S> {
+    let Some((name, n)) = class.rsplit_once('-') else {
+        return Err(s);
+    };
+    let Ok(n) = n.parse::<u16>() else {
+        return Err(s);
+    };
+    let line = || i16::try_from(n).unwrap_or(i16::MAX);
+    Ok(match name {
+        "grid-cols" => s.grid_cols(n),
+        "grid-rows" => s.grid_rows(n),
+        "col-span" => s.col_span(n),
+        "row-span" => s.row_span(n),
+        "col-start" => s.col_start(line()),
+        "col-end" => s.col_end(line()),
+        "row-start" => s.row_start(line()),
+        "row-end" => s.row_end(line()),
+        _ => return Err(s),
+    })
 }
 
 /// A class named for one of `Styled`'s methods (`style_gen.rs`).
@@ -395,6 +424,24 @@ mod tests {
 
     fn definite(pixels: f32) -> Option<DefiniteLength> {
         Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(pixels))))
+    }
+
+    #[test]
+    fn display_and_grid_classes_match_gpuis_methods() {
+        use gpui::Styled as _;
+        let theme = Theme::new();
+        let expect = |f: fn(gpui::Div) -> gpui::Div| f(gpui::div()).style().clone();
+        assert_eq!(styled("hidden", &theme), expect(|d| d.hidden()));
+        assert_eq!(styled("block", &theme), expect(|d| d.block()));
+        assert_eq!(styled("grid-cols-3", &theme), expect(|d| d.grid_cols(3)));
+        assert_eq!(styled("grid-rows-2", &theme), expect(|d| d.grid_rows(2)));
+        assert_eq!(styled("col-span-2", &theme), expect(|d| d.col_span(2)));
+        assert_eq!(styled("row-span-4", &theme), expect(|d| d.row_span(4)));
+        assert_eq!(styled("col-start-2", &theme), expect(|d| d.col_start(2)));
+        assert_eq!(styled("row-start-3", &theme), expect(|d| d.row_start(3)));
+        for class in ["hidden", "block", "grid-cols-12", "col-span-3"] {
+            assert!(!reported(class), "{class} reported as unsupported");
+        }
     }
 
     #[test]
