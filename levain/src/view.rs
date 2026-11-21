@@ -1453,9 +1453,16 @@ impl gpui::Render for Root {
         // The view's actions (`keymap.rs`): the body is on every dispatch
         // path, since it holds focus when nothing inside it does.
         let window_id = self.window;
+        // On phones the view stays clear of the status bar, notch, home
+        // indicator and keyboard; on desktop these are all zero.
+        let safe = safe_padding(window.viewport_size(), window.fully_visible_bounds());
         let body_div = gpui::div()
             .id("body")
             .size_full()
+            .pt(safe.top)
+            .pr(safe.right)
+            .pb(safe.bottom)
+            .pl(safe.left)
             .key_context(crate::keymap::window_context(window_id).as_str())
             .on_action(move |action: &crate::keymap::RuntimeAction, _, _| {
                 bridge::emit(&crate::events::action(window_id, action.name.as_ref()));
@@ -1465,9 +1472,44 @@ impl gpui::Render for Root {
     }
 }
 
+/// The padding that keeps a view of `viewport` inside `visible`, the part
+/// of the window nothing covers.
+fn safe_padding(
+    viewport: gpui::Size<gpui::Pixels>,
+    visible: gpui::Bounds<gpui::Pixels>,
+) -> gpui::Edges<gpui::Pixels> {
+    let zero = gpui::Pixels::ZERO;
+    gpui::Edges {
+        top: visible.origin.y.max(zero),
+        left: visible.origin.x.max(zero),
+        bottom: (viewport.height - visible.origin.y - visible.size.height).max(zero),
+        right: (viewport.width - visible.origin.x - visible.size.width).max(zero),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_view_is_padded_clear_of_what_covers_the_window() {
+        use gpui::{Bounds, Edges, point, px, size};
+        let viewport = size(px(390.), px(844.));
+        // A phone: 47pt status bar, 34pt home indicator.
+        let visible = Bounds::new(point(px(0.), px(47.)), size(px(390.), px(763.)));
+        assert_eq!(
+            safe_padding(viewport, visible),
+            Edges {
+                top: px(47.),
+                right: px(0.),
+                bottom: px(34.),
+                left: px(0.)
+            }
+        );
+        // A desktop window: nothing.
+        let all = Bounds::new(point(px(0.), px(0.)), viewport);
+        assert_eq!(safe_padding(viewport, all), Edges::default());
+    }
 
     #[test]
     fn image_sources_are_paths_urls_or_data() {
